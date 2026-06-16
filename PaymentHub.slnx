@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PaymentHub.Api/PaymentHub.Api.csproj" />
+    <Project Path="src/PaymentHub.Application/PaymentHub.Application.csproj" />
+    <Project Path="src/PaymentHub.Domain/PaymentHub.Domain.csproj" />
+    <Project Path="src/PaymentHub.Infrastructure.Postgres/PaymentHub.Infrastructure.Postgres.csproj" />
+    <Project Path="src/PaymentHub.Infrastructure.Providers/PaymentHub.Infrastructure.Providers.csproj" />
+    <Project Path="src/PaymentHub.Worker/PaymentHub.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj" />
+    <Project Path="tests/PaymentHub.UnitTests/PaymentHub.UnitTests.csproj" />
+  </Folder>
+</Solution>

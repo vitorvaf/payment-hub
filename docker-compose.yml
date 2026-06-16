@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: payment-hub-postgres
+    environment:
+      POSTGRES_DB: payment_gateway
+      POSTGRES_USER: payment_gateway
+      POSTGRES_PASSWORD: payment_gateway
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_gateway -d payment_gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: payment-hub-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_LISTEN_PORT: 80
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  payment-gateway-api:
+    build:
+      context: .
+      dockerfile: src/PaymentHub.Api/Dockerfile
+    container_name: payment-hub-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=payment_gateway;Username=payment_gateway;Password=payment_gateway
+      PaymentHub__DefaultProvider: Fake
+      PaymentHub__ApiKeyHashSecret: dev-secret-change-me
+      PaymentHub__CredentialEncryptionKey: dev-encryption-key-change-me-32bytes
+      PaymentHub__WebhookWorkerIntervalSeconds: "5"
+      PaymentHub__OutboxWorkerIntervalSeconds: "2"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  payment-gateway-worker:
+    build:
+      context: .
+      dockerfile: src/PaymentHub.Worker/Dockerfile
+    container_name: payment-hub-worker
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=payment_gateway;Username=payment_gateway;Password=payment_gateway
+      PaymentHub__DefaultProvider: Fake
+      PaymentHub__ApiKeyHashSecret: dev-secret-change-me
+      PaymentHub__CredentialEncryptionKey: dev-encryption-key-change-me-32bytes
+      PaymentHub__WebhookWorkerIntervalSeconds: "5"
+      PaymentHub__OutboxWorkerIntervalSeconds: "2"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      payment-gateway-api:
+        condition: service_started
+
+volumes:
+  postgres-data:

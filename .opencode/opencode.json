@@ -7,14 +7,5 @@
     "docs/harness/validation.md",
     "docs/harness/security.md",
     "docs/harness/learnings.md"
-  ],
-  "agents": {
-    "architect": ".opencode/agents/architect.md",
-    "backend-engineer": ".opencode/agents/backend-engineer.md",
-    "qa-engineer": ".opencode/agents/qa-engineer.md",
-    "security-reviewer": ".opencode/agents/security-reviewer.md"
-  },
-  "notes": [
-    "Se a versão instalada do OpenCode usar outro formato de configuração, preserve estes caminhos como referências do harness e adapte apenas a sintaxe."
   ]
 }

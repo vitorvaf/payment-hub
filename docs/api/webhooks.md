@@ -29,6 +29,7 @@ Endpoint: `POST /api/v1/webhooks/{providerCode}`
    - Aplica a transição no `Payment` e registra um `PaymentAttempt`.
    - Se o status mudou, gera um `OutboxEvent` (ex.: `payment.approved`).
    - Marca o `WebhookEvent` como `Processed`.
+   - Se o pagamento não existir, marca o `WebhookEvent` como `Failed`, preenche `LastError` e não gera `OutboxEvent`.
 5. Em caso de erro, incrementa `RetryCount` e calcula `NextRetryAt`:
    - `0s → 1m → 5m → 15m → 1h`
    - Após 5 tentativas, marca como `Failed`.
@@ -69,7 +70,8 @@ Configurada no campo `WebhookUrl` da `ApplicationClient` (definida no momento de
 | `X-PaymentHub-Event-Id` | Id do `OutboxEvent` |
 | `X-PaymentHub-Tenant` | Tenant id |
 | `X-PaymentHub-Application` | Application id |
-| `X-PaymentHub-Signature` | HMAC-SHA256(payload, WebhookSecret) em hexadecimal |
+| `X-PaymentHub-Timestamp` | Unix time seconds usado na assinatura |
+| `X-PaymentHub-Signature` | HMAC-SHA256 de `{timestamp}.{rawBody}` em hexadecimal lowercase |
 
 ### Payload
 
@@ -77,6 +79,8 @@ O payload é o JSON serializado do evento. Para `payment.approved` por exemplo:
 
 ```json
 {
+  "eventId": "2d5f1a98-07cc-4701-b7e7-4adcf60437e8",
+  "eventType": "payment.approved",
   "paymentId": "3f1c8e0c-9f0d-4a6b-8a1d-31b7bdf7f6a1",
   "externalReference": "job-search-order-123",
   "amount": 2990,
@@ -84,7 +88,7 @@ O payload é o JSON serializado do evento. Para `payment.approved` por exemplo:
   "provider": "Fake",
   "status": "Approved",
   "providerPaymentId": "fake_3f1c8e0c",
-  "updatedAt": "2026-06-16T12:00:00Z"
+  "occurredAt": "2026-06-16T12:00:00Z"
 }
 ```
 
@@ -96,9 +100,11 @@ using System.Text;
 
 string payload = await ReadBodyAsync(httpRequest);
 string secret = "shared-secret-between-payment-hub-and-app";
+string timestamp = httpRequest.Headers["X-PaymentHub-Timestamp"].ToString();
+string signedPayload = $"{timestamp}.{payload}";
 string expectedSignature = HMACSHA256.HashData(
     Encoding.UTF8.GetBytes(secret),
-    Encoding.UTF8.GetBytes(payload));
+    Encoding.UTF8.GetBytes(signedPayload));
 string presentedSignature = httpRequest.Headers["X-PaymentHub-Signature"].ToString();
 
 if (!CryptographicOperations.FixedTimeEquals(
@@ -108,6 +114,8 @@ if (!CryptographicOperations.FixedTimeEquals(
     return Results.Unauthorized();
 }
 ```
+
+O consumidor deve rejeitar timestamps fora de uma janela curta, recomendada em 5 minutos, para reduzir risco de replay. A idempotência do consumo deve usar `eventId`; reprocessar o mesmo `OutboxEvent` preserva o mesmo `eventId`, embora a assinatura possa mudar se o timestamp mudar.
 
 ### Resposta esperada
 

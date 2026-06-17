@@ -64,6 +64,7 @@ builder.Services.AddPaymentHubPostgres(builder.Configuration);
 builder.Services.AddPaymentHubProviders(builder.Configuration);
 
 builder.Services.AddScoped<ITenantContext, HttpTenantContext>();
+builder.Services.AddSingleton<IRuntimeEnvironment, HostRuntimeEnvironment>();
 builder.Services.AddScoped<IApplicationWebhookDispatcher, HttpApplicationWebhookDispatcher>();
 
 builder.Services.AddScoped<IRegisterTenantHandler, RegisterTenantHandler>();

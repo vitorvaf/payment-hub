@@ -25,6 +25,13 @@ Este arquivo registra aprendizados técnicos do projeto que devem orientar futur
 - Evidência: `Payment` inicia em `Created`; `CreateCheckoutHandler` chama `AttachProviderResult(..., PaymentStatus.Pending)` antes de salvar a resposta de sucesso.
 - Impacto para próximos agentes: Auditorias futuras devem comparar codigo e specs antes de mudar comportamento; se reformatarem `.env.example`, manter apenas valores fake e nao commitar `.env` real.
 
+### 2026-06-17 - Specs de pagamento devem ficar explícitas sobre idempotência e webhooks
+
+- Contexto: A auditoria encontrou gaps onde o texto da spec estava correto em alto nivel, mas faltavam detalhes operacionais para impedir fallback silencioso de provider, replay com payload diferente e webhook orfao marcado como processado.
+- Decisão: Checkout compara `request_hash` antes de retornar replay, provider explicito nunca cai para outro provider, webhooks sao parseados pelo adapter e pagamento inexistente vira `Failed` com `last_error`.
+- Evidência: Testes unitarios cobrem conflito de idempotencia, provider explicito invalido/sem conta ativa, transicoes perigosas de `PaymentStatus`, parsing por adapter, webhook orfao e HMAC `{timestamp}.{rawBody}`.
+- Impacto para próximos agentes: Ao alterar checkout ou webhook, confira specs `004`, `005`, `006`, `008`, `011` e `014`; preserve `eventId` como id do `OutboxEvent` e nao marque webhook sem pagamento como `Processed`.
+
 ### 2026-06-16 - OpenCode rejeita chaves top-level `agents` e `notes`
 
 - Contexto: A execução de `opencode` abortava porque `.opencode/opencode.json` continha as chaves top-level `agents` e `notes`.

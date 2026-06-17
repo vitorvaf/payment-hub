@@ -15,7 +15,9 @@ public interface ICredentialProtector
 public interface IWebhookSigner
 {
     string Sign(string payload, string secret);
+    string Sign(string payload, string secret, string timestamp);
     bool Verify(string payload, string secret, string signature);
+    bool Verify(string payload, string secret, string timestamp, string signature);
 }
 
 public interface IIdempotencyRequestHasher

@@ -23,6 +23,11 @@ public sealed class PaymentProviderRouter : IPaymentProviderRouter
             return explicitAdapter;
         }
 
+        if (!string.IsNullOrWhiteSpace(requestedProviderCode))
+        {
+            throw new InvalidOperationException($"No provider adapter available for '{requestedProviderCode}'.");
+        }
+
         if (_adapters.TryGetValue(_defaultProviderCode, out var defaultAdapter))
         {
             return defaultAdapter;

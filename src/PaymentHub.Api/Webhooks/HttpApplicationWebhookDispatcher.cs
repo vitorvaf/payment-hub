@@ -44,9 +44,10 @@ public sealed class HttpApplicationWebhookDispatcher : IApplicationWebhookDispat
             return;
         }
 
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
         var signature = string.IsNullOrWhiteSpace(app.WebhookSecret)
             ? string.Empty
-            : _signer.Sign(outboxEvent.PayloadJson, app.WebhookSecret);
+            : _signer.Sign(outboxEvent.PayloadJson, app.WebhookSecret, timestamp);
 
         var client = _httpClientFactory.CreateClient("application-webhook");
         client.Timeout = TimeSpan.FromSeconds(_options.WebhookHttpTimeoutSeconds);
@@ -59,6 +60,7 @@ public sealed class HttpApplicationWebhookDispatcher : IApplicationWebhookDispat
         request.Headers.TryAddWithoutValidation("X-PaymentHub-Event-Id", outboxEvent.Id.ToString());
         request.Headers.TryAddWithoutValidation("X-PaymentHub-Tenant", outboxEvent.TenantId.ToString());
         request.Headers.TryAddWithoutValidation("X-PaymentHub-Application", outboxEvent.ApplicationId.ToString());
+        request.Headers.TryAddWithoutValidation("X-PaymentHub-Timestamp", timestamp);
         if (!string.IsNullOrEmpty(signature))
         {
             request.Headers.TryAddWithoutValidation("X-PaymentHub-Signature", signature);

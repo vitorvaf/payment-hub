@@ -34,11 +34,51 @@ public class PaymentTests
     public void ApplyProviderStatus_Approved_ShouldSetProcessedAt()
     {
         var payment = BuildPayment();
+        payment.MarkPending();
 
-        payment.ApplyProviderStatus(PaymentStatus.Approved, "fake_abc");
+        var changed = payment.ApplyProviderStatus(PaymentStatus.Approved, "fake_abc");
 
+        changed.Should().BeTrue();
         payment.Status.Should().Be(PaymentStatus.Approved);
         payment.ProcessedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void ApplyProviderStatus_ShouldRejectDangerousRegression()
+    {
+        var payment = BuildPayment();
+        payment.MarkPending();
+        payment.ApplyProviderStatus(PaymentStatus.Approved, "fake_abc");
+
+        var changed = payment.ApplyProviderStatus(PaymentStatus.Pending, "fake_abc");
+
+        changed.Should().BeFalse();
+        payment.Status.Should().Be(PaymentStatus.Approved);
+    }
+
+    [Fact]
+    public void ApplyProviderStatus_ShouldAllowApprovedToRefunded()
+    {
+        var payment = BuildPayment();
+        payment.MarkPending();
+        payment.ApplyProviderStatus(PaymentStatus.Approved, "fake_abc");
+
+        var changed = payment.ApplyProviderStatus(PaymentStatus.Refunded, "fake_abc");
+
+        changed.Should().BeTrue();
+        payment.Status.Should().Be(PaymentStatus.Refunded);
+    }
+
+    [Fact]
+    public void ApplyProviderStatus_ShouldTreatSameStatusAsNoOp()
+    {
+        var payment = BuildPayment();
+        payment.MarkPending();
+
+        var changed = payment.ApplyProviderStatus(PaymentStatus.Pending, "fake_abc");
+
+        changed.Should().BeFalse();
+        payment.Status.Should().Be(PaymentStatus.Pending);
     }
 
     [Fact]

@@ -55,6 +55,11 @@ public class CheckoutsController : ControllerBase
                 tenantId, applicationId, idempotencyKey, request, providerCode, cancellationToken);
             return Created($"/api/v1/payments/{result.PaymentId}", result);
         }
+        catch (IdempotencyConflictException ex)
+        {
+            _logger.LogWarning(ex, "Checkout creation rejected due to idempotency conflict");
+            return Conflict(new { error = "idempotency_conflict", message = ex.Message });
+        }
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex, "Checkout creation failed");

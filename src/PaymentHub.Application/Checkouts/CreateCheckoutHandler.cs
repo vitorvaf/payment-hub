@@ -35,6 +35,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
     private readonly IOutboxPublisher _outbox;
     private readonly IUnitOfWork _uow;
     private readonly IClock _clock;
+    private readonly IRuntimeEnvironment _environment;
 
     public CreateCheckoutHandler(
         ITenantRepository tenants,
@@ -46,7 +47,8 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         IPaymentProviderRouter router,
         IOutboxPublisher outbox,
         IUnitOfWork uow,
-        IClock clock)
+        IClock clock,
+        IRuntimeEnvironment environment)
     {
         _tenants = tenants;
         _apps = apps;
@@ -58,6 +60,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         _outbox = outbox;
         _uow = uow;
         _clock = clock;
+        _environment = environment;
     }
 
     public async Task<CreateCheckoutResponse> HandleAsync(
@@ -77,9 +80,14 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         var application = await _apps.GetByTenantAndIdAsync(tenantId, applicationId, cancellationToken)
             ?? throw new InvalidOperationException("Application not found for tenant.");
 
+        var requestHash = _requestHasher.Hash(BuildIdempotencyHashInput(request));
+
         var existing = await _idempotency.FindAsync(tenantId, applicationId, idempotencyKey, cancellationToken);
         if (existing is not null)
         {
+            if (!string.Equals(existing.RequestHash, requestHash, StringComparison.Ordinal))
+                throw new IdempotencyConflictException();
+
             var existingPayment = await _payments.GetByIdAsync(existing.PaymentId, cancellationToken);
             if (existingPayment is not null)
             {
@@ -156,16 +164,20 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
             tenantId,
             applicationId,
             idempotencyKey,
-            _requestHasher.Hash(JsonSerializer.Serialize(request)),
+            requestHash,
             payment.Id);
         await _idempotency.AddAsync(idemKey, cancellationToken);
 
+        var outboxEventId = Guid.NewGuid();
         await _outbox.EnqueueAsync(
+            outboxEventId,
             tenantId,
             applicationId,
             "payment.checkout.created",
             new
             {
+                eventId = outboxEventId,
+                eventType = "payment.checkout.created",
                 paymentId = payment.Id,
                 externalReference = payment.ExternalReference,
                 amount = money.Amount,
@@ -174,7 +186,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
                 status = payment.Status.ToString(),
                 checkoutUrl = payment.CheckoutUrl,
                 providerPaymentId = payment.ProviderPaymentId,
-                createdAt = payment.CreatedAt
+                occurredAt = payment.CreatedAt
             },
             cancellationToken);
 
@@ -209,19 +221,61 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(requested) &&
-            Enum.TryParse<ProviderCode>(requested, ignoreCase: true, out var explicitCode))
+            !Enum.TryParse<ProviderCode>(requested, ignoreCase: true, out _))
         {
+            throw new InvalidOperationException($"Provider '{requested}' is not supported.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(requested))
+        {
+            var explicitCode = Enum.Parse<ProviderCode>(requested, ignoreCase: true);
             var exists = await _accounts.GetByCodeAsync(tenantId, applicationId, explicitCode, cancellationToken);
-            if (exists is not null) return explicitCode;
+            if (exists is null)
+                throw new InvalidOperationException($"Provider '{explicitCode}' has no active account for this application.");
+
+            return explicitCode;
         }
 
         if (applicationDefault.HasValue)
         {
             var def = await _accounts.GetDefaultAsync(tenantId, applicationId, applicationDefault.Value, cancellationToken);
-            if (def is not null) return applicationDefault.Value;
+            if (def is null)
+                throw new InvalidOperationException(
+                    $"Default provider '{applicationDefault.Value}' has no active account for this application.");
+
+            return applicationDefault.Value;
         }
 
-        return ProviderCode.Fake;
+        if (_environment.IsDevelopment)
+            return ProviderCode.Fake;
+
+        throw new InvalidOperationException("No default provider configured for this application.");
+    }
+
+    private static string BuildIdempotencyHashInput(CreateCheckoutRequestDto request)
+    {
+        var canonical = new
+        {
+            externalReference = request.ExternalReference,
+            customer = request.Customer is null
+                ? null
+                : new { name = request.Customer.Name, email = request.Customer.Email },
+            items = request.Items.Select(i => new
+            {
+                id = i.Id,
+                name = i.Name,
+                quantity = i.Quantity,
+                unitAmount = i.UnitAmount
+            }).ToArray(),
+            currency = string.IsNullOrWhiteSpace(request.Currency) ? "BRL" : request.Currency,
+            successUrl = request.SuccessUrl,
+            cancelUrl = request.CancelUrl,
+            metadata = request.Metadata?
+                .OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal)
+        };
+
+        return JsonSerializer.Serialize(canonical);
     }
 }
 

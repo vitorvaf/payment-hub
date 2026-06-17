@@ -24,6 +24,8 @@ Formalizar o contrato de `POST /api/v1/checkouts`, idempotencia, selecao de prov
 - `AmountInCents` e calculado por `items[].unitAmount * quantity`.
 - Moeda inicial: `BRL`.
 - `X-Provider`, quando enviado, deve ser validado.
+- `X-Provider` invalido deve falhar; o sistema nunca deve trocar silenciosamente o provider solicitado por outro.
+- `X-Provider` valido, mas sem `ProviderAccount` ativa para tenant/application, deve falhar.
 - Sem provider explicito, usar default da `ApplicationClient`.
 - Sem default em Development, permitir Fake provider.
 - Em Production, nao usar Fake provider automaticamente.
@@ -72,7 +74,7 @@ Erros:
 | 400 | Payload invalido ou `Idempotency-Key` ausente |
 | 401 | API Key invalida ou tenant/application incompativeis |
 | 409 | Idempotency key reutilizada com payload diferente |
-| 422 | Provider invalido ou falha ao criar checkout |
+| 422 | Provider invalido, provider sem conta ativa, default ausente ou falha ao criar checkout |
 
 ## Criterios de aceite
 

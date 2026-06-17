@@ -13,7 +13,20 @@ public sealed class OutboxPublisher : IOutboxPublisher
         _repository = repository;
     }
 
+    public async Task<Guid> EnqueueAsync<TEvent>(
+        Guid tenantId,
+        Guid applicationId,
+        string eventType,
+        TEvent @event,
+        CancellationToken cancellationToken)
+    {
+        var outboxEventId = Guid.NewGuid();
+        await EnqueueAsync(outboxEventId, tenantId, applicationId, eventType, @event, cancellationToken);
+        return outboxEventId;
+    }
+
     public async Task EnqueueAsync<TEvent>(
+        Guid outboxEventId,
         Guid tenantId,
         Guid applicationId,
         string eventType,
@@ -22,7 +35,7 @@ public sealed class OutboxPublisher : IOutboxPublisher
     {
         var payload = JsonSerializer.Serialize(@event);
         var outbox = new OutboxEvent(
-            Guid.NewGuid(),
+            outboxEventId,
             tenantId,
             applicationId,
             eventType,

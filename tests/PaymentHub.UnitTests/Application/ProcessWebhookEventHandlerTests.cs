@@ -3,6 +3,7 @@ using Moq;
 using PaymentHub.Application.Abstractions.Context;
 using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Persistence;
+using PaymentHub.Application.Abstractions.Providers;
 using PaymentHub.Application.Webhooks;
 using PaymentHub.Domain.Entities;
 using PaymentHub.Domain.Enums;
@@ -43,12 +44,34 @@ public class ProcessWebhookEventHandlerTests
             .ReturnsAsync((Payment?)null);
 
         var outbox = new Mock<IOutboxPublisher>();
+        outbox.Setup(o => o.EnqueueAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<object>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         var uow = new Mock<IUnitOfWork>();
         uow.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
         var clock = new Mock<IClock>();
         clock.Setup(c => c.UtcNow).Returns(new DateTime(2026, 6, 16, 12, 0, 0, DateTimeKind.Utc));
+        var adapter = new Mock<IPaymentProviderAdapter>();
+        adapter.Setup(a => a.ProviderCode).Returns("Fake");
+        adapter.Setup(a => a.ParseWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderWebhookParseResult(
+                true,
+                "evt-1",
+                "payment.approved",
+                paymentId.ToString(),
+                "approved",
+                null,
+                null));
+        var router = new Mock<IPaymentProviderRouter>();
+        router.Setup(r => r.Resolve("Fake")).Returns(adapter.Object);
 
-        var handler = new ProcessWebhookEventHandler(webhooks.Object, payments.Object, outbox.Object, uow.Object, clock.Object);
+        var handler = new ProcessWebhookEventHandler(
+            webhooks.Object, payments.Object, router.Object, outbox.Object, uow.Object, clock.Object);
 
         await handler.ProcessAsync(webhookId, CancellationToken.None);
 
@@ -57,14 +80,16 @@ public class ProcessWebhookEventHandlerTests
         webhook.ApplicationId.Should().Be(appId);
         payment.Status.Should().Be(PaymentStatus.Approved);
         outbox.Verify(o => o.EnqueueAsync(
+            It.IsAny<Guid>(),
             tenantId, appId,
             "payment.approved",
             It.IsAny<object>(),
             It.IsAny<CancellationToken>()), Times.Once);
+        adapter.Verify(a => a.ParseWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task ProcessAsync_ShouldScheduleRetryOnError()
+    public async Task ProcessAsync_ShouldPermanentlyFailWhenPaymentDoesNotExist()
     {
         var webhookId = Guid.NewGuid();
         var webhook = new WebhookEvent(
@@ -90,12 +115,33 @@ public class ProcessWebhookEventHandlerTests
         uow.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
         var clock = new Mock<IClock>();
         clock.Setup(c => c.UtcNow).Returns(new DateTime(2026, 6, 16, 12, 0, 0, DateTimeKind.Utc));
+        var adapter = new Mock<IPaymentProviderAdapter>();
+        adapter.Setup(a => a.ProviderCode).Returns("Fake");
+        adapter.Setup(a => a.ParseWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderWebhookParseResult(
+                true,
+                "evt-2",
+                "payment.approved",
+                "abc",
+                "approved",
+                null,
+                null));
+        var router = new Mock<IPaymentProviderRouter>();
+        router.Setup(r => r.Resolve("Fake")).Returns(adapter.Object);
 
-        var handler = new ProcessWebhookEventHandler(webhooks.Object, payments.Object, outbox.Object, uow.Object, clock.Object);
+        var handler = new ProcessWebhookEventHandler(
+            webhooks.Object, payments.Object, router.Object, outbox.Object, uow.Object, clock.Object);
 
         await handler.ProcessAsync(webhookId, CancellationToken.None);
 
-        // ProviderPaymentId is "abc" which is not a Guid, but the handler falls back to repository lookup; the lookup returns null and the webhook is marked as processed.
-        webhook.ProcessingStatus.Should().Be(WebhookProcessingStatus.Processed);
+        webhook.ProcessingStatus.Should().Be(WebhookProcessingStatus.Failed);
+        webhook.LastError.Should().Contain("Payment not found");
+        outbox.Verify(o => o.EnqueueAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<Guid>(),
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<object>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 }

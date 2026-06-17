@@ -40,6 +40,8 @@ Payload interno esperado:
 
 ```json
 {
+  "eventId": "2d5f1a98-07cc-4701-b7e7-4adcf60437e8",
+  "eventType": "payment.approved",
   "paymentId": "guid",
   "externalReference": "job-search-order-123",
   "amount": 2990,
@@ -47,9 +49,20 @@ Payload interno esperado:
   "provider": "Fake",
   "status": "Approved",
   "providerPaymentId": "fake_...",
-  "updatedAt": "2026-06-16T12:00:00Z"
+  "occurredAt": "2026-06-16T12:00:00Z"
 }
 ```
+
+`eventId` deve ser o id do `OutboxEvent`. Reprocessar o mesmo `OutboxEvent` mantem o mesmo `eventId`, mesmo que uma nova tentativa use outro timestamp de assinatura.
+
+Headers de assinatura:
+
+```http
+X-PaymentHub-Timestamp: <unix_time_seconds>
+X-PaymentHub-Signature: <hex_lowercase_hmac_sha256>
+```
+
+A string assinada e `{timestamp}.{rawBody}` usando UTF-8. O Job Search deve rejeitar timestamps fora da janela recomendada de 5 minutos e aplicar idempotencia por `eventId`.
 
 Eventos:
 

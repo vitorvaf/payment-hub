@@ -80,17 +80,26 @@ public sealed class AesCredentialProtector : ICredentialProtector
 public sealed class HmacWebhookSigner : IWebhookSigner
 {
     public string Sign(string payload, string secret)
+        => Sign(payload, secret, string.Empty);
+
+    public string Sign(string payload, string secret, string timestamp)
     {
         if (string.IsNullOrEmpty(secret)) return string.Empty;
+        var signedPayload = string.IsNullOrEmpty(timestamp)
+            ? payload
+            : $"{timestamp}.{payload}";
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
+        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(signedPayload));
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     public bool Verify(string payload, string secret, string signature)
+        => Verify(payload, secret, string.Empty, signature);
+
+    public bool Verify(string payload, string secret, string timestamp, string signature)
     {
         if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(signature)) return false;
-        var expected = Sign(payload, secret);
+        var expected = Sign(payload, secret, timestamp);
         return CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(expected),
             Encoding.UTF8.GetBytes(signature));

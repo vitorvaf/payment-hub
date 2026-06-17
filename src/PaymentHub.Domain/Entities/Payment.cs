@@ -1,4 +1,5 @@
 using PaymentHub.Domain.Enums;
+using PaymentHub.Domain.Services;
 using PaymentHub.Domain.ValueObjects;
 
 namespace PaymentHub.Domain.Entities;
@@ -69,6 +70,9 @@ public class Payment
 
     public void AttachProviderResult(string? providerPaymentId, string? checkoutUrl, PaymentStatus newStatus)
     {
+        if (!PaymentStatusTransitionPolicy.CanTransition(Status, newStatus))
+            throw new InvalidOperationException($"Invalid payment status transition from {Status} to {newStatus}.");
+
         ProviderPaymentId = providerPaymentId;
         CheckoutUrl = checkoutUrl;
         Status = newStatus;
@@ -77,12 +81,25 @@ public class Payment
 
     public void MarkPending()
     {
+        if (!PaymentStatusTransitionPolicy.CanTransition(Status, PaymentStatus.Pending))
+            throw new InvalidOperationException($"Invalid payment status transition from {Status} to {PaymentStatus.Pending}.");
+
         Status = PaymentStatus.Pending;
         UpdatedAt = DateTime.UtcNow;
     }
 
-    public void ApplyProviderStatus(PaymentStatus newStatus, string? providerPaymentId = null)
+    public bool ApplyProviderStatus(PaymentStatus newStatus, string? providerPaymentId = null)
     {
+        if (Status == newStatus)
+        {
+            if (providerPaymentId is not null) ProviderPaymentId = providerPaymentId;
+            UpdatedAt = DateTime.UtcNow;
+            return false;
+        }
+
+        if (!PaymentStatusTransitionPolicy.CanTransition(Status, newStatus))
+            return false;
+
         if (providerPaymentId is not null) ProviderPaymentId = providerPaymentId;
         Status = newStatus;
         UpdatedAt = DateTime.UtcNow;
@@ -91,6 +108,8 @@ public class Payment
         {
             ProcessedAt = DateTime.UtcNow;
         }
+
+        return true;
     }
 
     public PaymentAttempt RegisterAttempt(PaymentAttemptStatus status, string? providerPaymentId, string? errorMessage = null)

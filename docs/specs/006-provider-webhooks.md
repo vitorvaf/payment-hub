@@ -23,6 +23,8 @@ Formalizar recebimento, deduplicacao e processamento assíncrono de webhooks ext
 - Controller retorna `202 Accepted` quando evento for aceito.
 - Assinatura externa deve ser validada quando o provider suportar.
 - Validacao pode acontecer no adapter, mas o comportamento precisa ser testavel.
+- Worker deve resolver o `IPaymentProviderAdapter` pelo `ProviderCode` e delegar parsing para `ParseWebhookAsync`.
+- Handler de webhook nao deve depender de campos JSON especificos de Stripe, Abacate Pay, Mercado Pago ou Fake.
 - Duplicado com mesmo `provider_code + provider_event_id` retorna 202 com referencia ao evento conhecido.
 - Payload invalido pode ser recusado com 400 quando nao for JSON parseavel; se aceito, deve ser persistido com status adequado.
 
@@ -51,7 +53,7 @@ Cenarios:
 | sem provider_event_id | Aceitar, mas deduplicacao fica limitada |
 | assinatura invalida | Recusar ou marcar falha conforme adapter do provider |
 | fora de ordem | Evitar regressao de status terminal |
-| pagamento inexistente | Retry ou Failed com `last_error` claro |
+| pagamento inexistente | Marcar `Failed` com `last_error` claro e nao gerar `OutboxEvent` |
 
 ## Criterios de aceite
 

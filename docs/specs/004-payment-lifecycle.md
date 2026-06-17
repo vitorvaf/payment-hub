@@ -25,6 +25,8 @@ Definir status canonico, transicoes e eventos esperados para pagamentos.
 - Se a criacao no provider falhar, registrar attempt `Failed` e retornar erro sem gerar evento de sucesso.
 - Eventos duplicados nao podem gerar efeitos duplicados.
 - Eventos atrasados ou fora de ordem devem ser ignorados, tratados como no-op ou marcados para revisao conforme risco.
+- Mesmo status aplicado novamente deve ser tratado como no-op idempotente.
+- Transicao invalida nao deve sobrescrever o status atual nem gerar evento interno.
 
 ## Contratos
 

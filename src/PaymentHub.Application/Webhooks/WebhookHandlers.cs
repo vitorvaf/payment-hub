@@ -1,4 +1,3 @@
-using System.Text.Json;
 using PaymentHub.Application.Abstractions.Context;
 using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Persistence;
@@ -76,6 +75,7 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
 {
     private readonly IWebhookEventRepository _webhooks;
     private readonly IPaymentRepository _payments;
+    private readonly IPaymentProviderRouter _router;
     private readonly IOutboxPublisher _outbox;
     private readonly IUnitOfWork _uow;
     private readonly IClock _clock;
@@ -83,12 +83,14 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
     public ProcessWebhookEventHandler(
         IWebhookEventRepository webhooks,
         IPaymentRepository payments,
+        IPaymentProviderRouter router,
         IOutboxPublisher outbox,
         IUnitOfWork uow,
         IClock clock)
     {
         _webhooks = webhooks;
         _payments = payments;
+        _router = router;
         _outbox = outbox;
         _uow = uow;
         _clock = clock;
@@ -107,12 +109,26 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
 
         try
         {
-            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(webhook.RawPayloadJson) ? "{}" : webhook.RawPayloadJson);
-            var root = doc.RootElement;
+            var adapter = _router.Resolve(webhook.ProviderCode.ToString());
+            var parsed = await adapter.ParseWebhookAsync(
+                new ProviderWebhookRequest(
+                    webhook.RawPayloadJson,
+                    webhook.Signature,
+                    new Dictionary<string, string>
+                    {
+                        ["X-Provider-Event-Id"] = webhook.ProviderEventId ?? string.Empty,
+                        ["X-Provider-Event-Type"] = webhook.EventType
+                    }),
+                cancellationToken);
 
-            var providerPaymentId = TryGetString(root, "providerPaymentId", "id", "paymentId");
-            var providerStatus = TryGetString(root, "status", "eventType", "type");
+            if (!parsed.IsValid)
+            {
+                webhook.MarkPermanentlyFailed(parsed.ErrorMessage ?? "Invalid provider webhook payload.");
+                await _uow.SaveChangesAsync(cancellationToken);
+                return;
+            }
 
+            var providerPaymentId = parsed.ProviderPaymentId;
             if (string.IsNullOrWhiteSpace(providerPaymentId))
                 throw new InvalidOperationException("Webhook payload missing provider payment id.");
 
@@ -120,27 +136,33 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
             var payment = payments;
             if (payment is null)
             {
-                webhook.MarkProcessed();
+                webhook.MarkPermanentlyFailed(
+                    $"Payment not found for provider '{webhook.ProviderCode}' and providerPaymentId '{providerPaymentId}'.");
                 await _uow.SaveChangesAsync(cancellationToken);
                 return;
             }
 
-            var newStatus = PaymentStatusMapper.FromProviderStatus(webhook.ProviderCode.ToString(), providerStatus ?? string.Empty);
+            var newStatus = PaymentStatusMapper.FromProviderStatus(webhook.ProviderCode.ToString(), parsed.ProviderStatus ?? parsed.EventType);
             var previousStatus = payment.Status;
-            payment.ApplyProviderStatus(newStatus, providerPaymentId);
+            var statusChanged = payment.ApplyProviderStatus(newStatus, providerPaymentId);
             payment.RegisterAttempt(
                 newStatus == PaymentStatus.Approved ? PaymentAttemptStatus.Succeeded : PaymentAttemptStatus.Succeeded,
                 providerPaymentId,
                 null);
 
-            if (previousStatus != newStatus)
+            if (statusChanged && previousStatus != newStatus)
             {
+                var eventType = $"payment.{newStatus.ToString().ToLowerInvariant()}";
+                var outboxEventId = Guid.NewGuid();
                 await _outbox.EnqueueAsync(
+                    outboxEventId,
                     payment.TenantId,
                     payment.ApplicationId,
-                    $"payment.{newStatus.ToString().ToLowerInvariant()}",
+                    eventType,
                     new
                     {
+                        eventId = outboxEventId,
+                        eventType,
                         paymentId = payment.Id,
                         externalReference = payment.ExternalReference,
                         amount = payment.Amount.Amount,
@@ -148,7 +170,7 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
                         provider = payment.SelectedProvider.ToString(),
                         status = payment.Status.ToString(),
                         providerPaymentId = payment.ProviderPaymentId,
-                        updatedAt = payment.UpdatedAt
+                        occurredAt = payment.UpdatedAt
                     },
                     cancellationToken);
             }
@@ -177,18 +199,5 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
                 return direct;
         }
         return await _payments.GetByProviderPaymentIdAsync(webhook.ProviderCode.ToString(), providerPaymentId, cancellationToken);
-    }
-
-    private static string? TryGetString(JsonElement element, params string[] names)
-    {
-        foreach (var name in names)
-        {
-            if (element.TryGetProperty(name, out var prop))
-            {
-                if (prop.ValueKind == JsonValueKind.String) return prop.GetString();
-                if (prop.ValueKind == JsonValueKind.Number) return prop.GetRawText();
-            }
-        }
-        return null;
     }
 }

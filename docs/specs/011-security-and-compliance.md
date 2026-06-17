@@ -39,9 +39,27 @@ Consolidar regras de seguranca obrigatorias para o MVP.
 |------|----------|
 | API Key | `Authorization: Bearer`, hash HMAC no banco, claro exibido uma vez |
 | Provider credentials | JSON protegido por criptografia |
-| Webhook interno | `X-PaymentHub-Signature` HMAC-SHA256 |
+| Webhook interno | `X-PaymentHub-Signature` HMAC-SHA256 sobre `timestamp.rawBody` |
 | Webhook externo | Assinatura validada quando provider oferecer |
 | Logs | correlation id e contexto sem secrets |
+
+### HMAC de webhook interno
+
+- Algoritmo: `HMAC-SHA256`.
+- Encoding do payload: UTF-8.
+- Formato da assinatura: hexadecimal lowercase.
+- Header de timestamp: `X-PaymentHub-Timestamp`, em Unix time seconds.
+- Header de assinatura: `X-PaymentHub-Signature`.
+- String assinada: `{timestamp}.{rawBody}`.
+- Tolerancia recomendada para consumidores: 5 minutos.
+- Prevencao de replay: consumidor deve rejeitar timestamp fora da janela e aplicar idempotencia por `eventId`.
+
+Exemplo:
+
+```text
+signed_payload = "{timestamp}.{rawBody}"
+signature = HMACSHA256(webhookSecret, signed_payload)
+```
 
 ## Criterios de aceite
 

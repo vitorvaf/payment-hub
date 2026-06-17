@@ -23,6 +23,7 @@ public class CreateCheckoutHandlerTests
     private readonly Mock<IOutboxPublisher> _outbox = new();
     private readonly Mock<IUnitOfWork> _uow = new();
     private readonly Mock<IClock> _clock = new();
+    private readonly Mock<IRuntimeEnvironment> _environment = new();
     private readonly FakePaymentProviderAdapterStub _fakeAdapter;
     private readonly IPaymentProviderRouter _router;
 
@@ -38,6 +39,7 @@ public class CreateCheckoutHandlerTests
         _uow.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
         _clock.Setup(c => c.UtcNow).Returns(new DateTime(2026, 6, 16, 12, 0, 0, DateTimeKind.Utc));
         _hasher.Setup(h => h.Hash(It.IsAny<string>())).Returns("hash");
+        _environment.Setup(e => e.IsDevelopment).Returns(true);
 
         _fakeAdapter = new FakePaymentProviderAdapterStub();
         _router = new TestProviderRouter(_fakeAdapter);
@@ -75,6 +77,7 @@ public class CreateCheckoutHandlerTests
         _payments.Verify(p => p.AddAsync(It.IsAny<Payment>(), It.IsAny<CancellationToken>()), Times.Once);
         _idempotency.Verify(i => i.AddAsync(It.IsAny<IdempotencyKey>(), It.IsAny<CancellationToken>()), Times.Once);
         _outbox.Verify(o => o.EnqueueAsync(
+            It.IsAny<Guid>(),
             tenantId, appId, "payment.checkout.created",
             It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -106,6 +109,79 @@ public class CreateCheckoutHandlerTests
 
         result.PaymentId.Should().Be(existingPaymentId);
         _payments.Verify(p => p.AddAsync(It.IsAny<Payment>(), It.IsAny<CancellationToken>()), Times.Never);
+        _fakeAdapter.CreateCheckoutCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ShouldThrowConflictForRepeatedIdempotencyKeyWithDifferentPayload()
+    {
+        var handler = CreateHandler();
+        var tenantId = Guid.NewGuid();
+        var appId = Guid.NewGuid();
+        var existingPaymentId = Guid.NewGuid();
+        _apps.Setup(a => a.GetByTenantAndIdAsync(tenantId, appId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ApplicationClient(appId, tenantId, "Test App"));
+        _idempotency.Setup(i => i.FindAsync(tenantId, appId, "key-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IdempotencyKey(Guid.NewGuid(), tenantId, appId, "key-1", "original-hash", existingPaymentId));
+        _hasher.Setup(h => h.Hash(It.IsAny<string>())).Returns("different-hash");
+
+        var request = new CreateCheckoutRequestDto(
+            "order-2",
+            new CustomerDto(null, null),
+            new List<CheckoutItemDto> { new("a", "A", 1, 3990) },
+            "BRL", null, null, null);
+
+        var act = async () => await handler.HandleAsync(
+            tenantId, appId, "key-1", request, null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<IdempotencyConflictException>();
+        _payments.Verify(p => p.AddAsync(It.IsAny<Payment>(), It.IsAny<CancellationToken>()), Times.Never);
+        _fakeAdapter.CreateCheckoutCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ShouldThrowWhenExplicitProviderIsInvalid()
+    {
+        var handler = CreateHandler();
+        var request = ValidRequest();
+
+        var act = async () => await handler.HandleAsync(
+            Guid.NewGuid(), Guid.NewGuid(), "key", request, "MissingProvider", CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*not supported*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_ShouldThrowWhenExplicitProviderHasNoActiveAccount()
+    {
+        var handler = CreateHandler();
+        _accounts.Setup(a => a.GetByCodeAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), ProviderCode.Fake, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderAccount?)null);
+
+        var act = async () => await handler.HandleAsync(
+            Guid.NewGuid(), Guid.NewGuid(), "key", ValidRequest(), "Fake", CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*no active account*");
+    }
+
+    [Fact]
+    public async Task HandleAsync_ShouldThrowInProductionWhenNoProviderIsConfigured()
+    {
+        var tenantId = Guid.NewGuid();
+        var appId = Guid.NewGuid();
+        _environment.Setup(e => e.IsDevelopment).Returns(false);
+        _apps.Setup(a => a.GetByTenantAndIdAsync(tenantId, appId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ApplicationClient(appId, tenantId, "Test App"));
+
+        var handler = CreateHandler();
+
+        var act = async () => await handler.HandleAsync(
+            tenantId, appId, "key", ValidRequest(), null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*No default provider*");
     }
 
     [Fact]
@@ -138,15 +214,27 @@ public class CreateCheckoutHandlerTests
 
     private CreateCheckoutHandler CreateHandler()
         => new(_tenants.Object, _apps.Object, _accounts.Object, _payments.Object,
-            _idempotency.Object, _hasher.Object, _router, _outbox.Object, _uow.Object, _clock.Object);
+            _idempotency.Object, _hasher.Object, _router, _outbox.Object, _uow.Object, _clock.Object, _environment.Object);
+
+    private static CreateCheckoutRequestDto ValidRequest()
+        => new(
+            "order-1",
+            new CustomerDto(null, null),
+            new List<CheckoutItemDto> { new("a", "A", 1, 100) },
+            "BRL",
+            null,
+            null,
+            null);
 
     private sealed class FakePaymentProviderAdapterStub : IPaymentProviderAdapter
     {
         public string ProviderCode => "Fake";
+        public int CreateCheckoutCallCount { get; private set; }
 
         public Task<CreateCheckoutProviderResult> CreateCheckoutAsync(
             CreateCheckoutProviderRequest request, CancellationToken cancellationToken)
         {
+            CreateCheckoutCallCount++;
             return Task.FromResult(new CreateCheckoutProviderResult(
                 Success: true,
                 ProviderPaymentId: $"fake_{request.PaymentId:N}",

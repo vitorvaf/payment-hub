@@ -43,7 +43,7 @@ Os arquivos abaixo foram criados ou alterados na correcao de aderencia executada
 | `docs/audits/payment-hub-current-state-audit-2026-06-17.md` | Auditoria | Estado atual do repositorio: codigo, specs, testes, gaps e premissas nao validadas |
 | `docs/harness/payment-hub-execution-guide.md` | Harness | Guia completo de execucao do agente: fluxo de 9 etapas, regras e referencias |
 
-### Arquivos alterados na correcao
+### Arquivos alterados na correcao de aderencia (2026-06-17, rodada 1)
 
 | Arquivo | Motivo |
 | ------- | ------ |
@@ -51,6 +51,27 @@ Os arquivos abaixo foram criados ou alterados na correcao de aderencia executada
 | `docs/specs/000-spec-index.md` | Status padronizados: `DRAFT`/`REVIEW`/`ACCEPTED` substituidos pelo enum oficial do harness |
 | `docs/roadmap/001-development-timeline.md` | Secao `Timeline Decision` adicionada; linha em branco antes da legenda corrigida (MD032) |
 | `docs/roadmap/000-payment-hub-roadmap.md` | Caveats explicitos adicionados em Phase 0 (gap P2) e Phase 1 (3 gaps P1 com descricao e slices) |
+
+### Arquivos alterados na correcao de inconsistencias remanescentes (2026-06-17, rodada 2)
+
+| Arquivo | Inconsistencia corrigida |
+| ------- | ------------------------ |
+| `docs/roadmap/000-payment-hub-roadmap.md` | Secao "Definicao dos status de phase" adicionada distinguindo `IMPLEMENTED` de `VALIDATED`; Phase 6 "Gaps conhecidos" corrigido de 5 P1 para 4 P1 proprios + P1-4 como responsabilidade de Phase 7; Phase 7 "Dependencias" detalhado com dependencia parcial (Slice 7-A independente; validacao completa requer Slice 6-C) |
+| `docs/roadmap/002-phase-status-board.md` | Coluna renomeada para "Gaps P1 proprios"; Phase 1 e Phase 3 tiveram contagem ajustada para 0 com notas explicativas; Phase 6 listou os 4 gaps por ID (P1-1, P1-2, P1-3, P1-5); Phase 7 listou o gap P1-4 por ID; notas de rodape adicionadas |
+| `docs/adr/000-adr-index.md` | Nota de lifecycle adicionada: `PROPOSED`/`ACCEPTED`/`DEPRECATED`/`SUPERSEDED` sao status exclusivos de ADR, independentes do enum operacional do harness |
+| `docs/audits/spec-adherence-audit-2026-06-17.md` | Secao "Nota sobre nomes de specs" adicionada ao final: mapeia 6 nomes antigos de specs para os nomes atuais em `docs/specs/` |
+| `docs/audits/payment-hub-current-state-audit-2026-06-17.md` | Tres campos `(verificar implementacao)` substituidos pelos valores reais dos enums: `PaymentAttemptStatus` (Pending/Succeeded/Failed), `OutboxEventStatus` (Pending/Processing/Sent/Failed), `WebhookProcessingStatus` (Pending/Processing/Processed/Failed) |
+
+### Inconsistencias corrigidas nesta rodada
+
+| # | Inconsistencia | Arquivo(s) afetado(s) |
+| - | -------------- | --------------------- |
+| I-01 | `IMPLEMENTED` e `VALIDATED` usados sem definicao clara, risco de ambiguidade operacional | `000-payment-hub-roadmap.md` |
+| I-02 | Phase 6 declarava "5 achados P1", mas owns apenas 4; P1-4 e de Phase 7 | `000-payment-hub-roadmap.md`, `002-phase-status-board.md` |
+| I-03 | Phase 7 listava Phase 6 como dependencia total, contraditando a Timeline Decision que coloca Phase 7 antes de Phase 6 | `000-payment-hub-roadmap.md` |
+| I-04 | Status de ADR (`PROPOSED`, `ACCEPTED`) podiam ser confundidos com o enum operacional do harness | `000-adr-index.md` |
+| I-05 | Audit de aderencia usava 6 nomes de specs que nao existem no filesystem atual | `spec-adherence-audit-2026-06-17.md` |
+| I-06 | Tres enums com valor `(verificar implementacao)` — placeholder nao fechado | `payment-hub-current-state-audit-2026-06-17.md` |
 
 ---
 

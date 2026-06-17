@@ -40,9 +40,9 @@ Os principais gaps sao: dispatcher HTTP real ausente no worker de Outbox (P1), e
 | Enum | Valores |
 | ---- | ------- |
 | `PaymentStatus` | `Pending`, `Processing`, `Paid`, `Failed`, `Canceled`, `Expired`, `Refunded` |
-| `PaymentAttemptStatus` | (verificar implementacao) |
-| `OutboxEventStatus` | (verificar implementacao) |
-| `WebhookProcessingStatus` | (verificar implementacao) |
+| `PaymentAttemptStatus` | `Pending`, `Succeeded`, `Failed` |
+| `OutboxEventStatus` | `Pending`, `Processing`, `Sent`, `Failed` |
+| `WebhookProcessingStatus` | `Pending`, `Processing`, `Processed`, `Failed` |
 | `ProviderCode` | `AbacatePay`, `Stripe`, `MercadoPago`, `Fake` |
 | `ProviderEnvironment` | `Sandbox`, `Production` |
 | `TenantStatus` | `Active`, `Suspended`, `Inactive` |

@@ -6,6 +6,16 @@ Este documento cobre as 11 fases do Payment Hub (Phase 0 a Phase 10), desde a fu
 
 Status possivel: `NOT_STARTED` | `DISCOVERY` | `SPEC_DRAFTED` | `SPEC_REVIEW_REQUIRED` | `READY_FOR_IMPLEMENTATION` | `IMPLEMENTING` | `IMPLEMENTED` | `VALIDATED` | `BLOCKED` | `DEFERRED`
 
+### Definicao dos status de phase
+
+| Status | Significado operacional |
+| ------ | ----------------------- |
+| `IMPLEMENTING` | Codigo em desenvolvimento; testes parciais; pode ter gaps P1 abertos pertencentes a esta phase. |
+| `IMPLEMENTED` | Codigo mesclado e build/testes passando. Pode conter gaps P1 **pertencentes a outra phase** (ex.: Phase 1 tem gaps de seguranca que sao escopo da Phase 6). **Nao significa pronto para producao.** |
+| `VALIDATED` | `IMPLEMENTED` + todos os criterios de aceite verificados + nenhum gap P1 aberto de responsabilidade desta phase. Unico status que indica que a phase pode ser considerada completa para fins operacionais. |
+
+> **Regra para o agente:** `IMPLEMENTED` nao equivale a `VALIDATED`. Uma phase marcada como `IMPLEMENTED` pode ainda ter gaps que a impedem de ir para producao. Verificar sempre a secao "Gaps conhecidos" da phase e os registros em `docs/audits/spec-adherence-audit-2026-06-17.md` antes de tratar a phase como finalizada.
+
 ---
 
 ## Phase 0 — Produto, Arquitetura e Fronteiras
@@ -321,8 +331,16 @@ Corrigir os gaps de seguranca e autorizacao identificados na auditoria e enrijec
 
 ### Gaps conhecidos (P1 criticos)
 
-- 5 achados P1 da auditoria de 2026-06-17 sao todos enderecos por esta phase.
-- Ver `docs/audits/spec-adherence-audit-2026-06-17.md`.
+Esta phase e responsavel por 4 dos 5 gaps P1 da auditoria de 2026-06-17:
+
+- **P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados → Slice 6-A.
+- **P1-2** — `RegisterProviderAccountHandler` usa tenant/application do body → Slice 6-B.
+- **P1-3** — Endpoints de bootstrap/admin sem politica de autenticacao → Slice 6-D + ADR-0006.
+- **P1-5** — `ApplicationClient.WebhookSecret` persistido em texto claro → Slice 6-C + ADR-0007.
+
+O gap P1-4 (`NoopApplicationWebhookDispatcher`) e de responsabilidade da Phase 7 (Slice 7-A), nao desta phase. No entanto, o Slice 6-C (protecao de `WebhookSecret`) e prerequisito para que o Slice 7-A possa ser validado de forma segura, pois o dispatcher HTTP usara o secret para assinar os webhooks internos.
+
+Ver `docs/audits/spec-adherence-audit-2026-06-17.md` para detalhes de cada achado.
 
 ---
 
@@ -360,12 +378,14 @@ Garantir que workers de Inbox e Outbox sejam idiomaticos, resilientes e com disp
 
 ### Dependencias
 
-- Phase 3 (baseline do worker)
-- Phase 6 (seguranca do webhook secret)
+- Phase 3 (baseline do worker) — obrigatoria para iniciar qualquer slice desta phase.
+- Phase 6 Slice 6-C (protecao de `WebhookSecret`) — obrigatoria apenas para VALIDAR esta phase; Slice 7-A pode ser executado antes de Slice 6-C ser concluido.
+
+> **Nota de dependencia parcial:** A dependencia em Phase 6 nao e total. Slice 7-A (substituir `NoopApplicationWebhookDispatcher` por HTTP real) pode comecar antes que Phase 6 esteja concluida. A restricao e: Phase 7 so pode ser marcada como `VALIDATED` depois que o Slice 6-C estiver concluido, pois o dispatcher HTTP real usara `WebhookSecret` para assinar os payloads. Iniciar Phase 7 antes de Phase 6 e intencional — ver `docs/roadmap/001-development-timeline.md`, secao "Timeline Decision".
 
 ### Gaps conhecidos (P1)
 
-- `NoopApplicationWebhookDispatcher` registrado no Worker host e gap P1 da auditoria.
+- **P1-4** — `NoopApplicationWebhookDispatcher` registrado no Worker host (gap P1 compartilhado com Phase 3, de responsabilidade desta phase) → Slice 7-A.
 
 ---
 

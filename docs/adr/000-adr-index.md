@@ -6,6 +6,15 @@ Este arquivo indexa todas as decisoes arquiteturais registradas (ADRs) do Paymen
 
 Status possivel: `PROPOSED` | `ACCEPTED` | `DEPRECATED` | `SUPERSEDED`
 
+> **Nota sobre status de ADR:** Os status acima sao exclusivos do lifecycle de ADRs e sao independentes do enum operacional do harness (`NOT_STARTED`, `IMPLEMENTING`, `IMPLEMENTED`, etc.). Um ADR `ACCEPTED` nao significa que a feature esta implementada — significa apenas que a decisao arquitetural foi tomada e registrada. O status de implementacao da feature e rastreado no roadmap e nos specs, nao no ADR.
+>
+> | Status ADR | Significado |
+> | ---------- | ----------- |
+> | `PROPOSED` | Decisao identificada como necessaria; aguarda revisao e aprovacao. |
+> | `ACCEPTED` | Decisao tomada e registrada; orienta implementacao. Imutavel. |
+> | `DEPRECATED` | ADR ainda valido historicamente, mas a decisao nao e mais relevante para o produto atual. |
+> | `SUPERSEDED` | Substituido por outro ADR mais recente. O ADR deve referenciar o substituto. |
+
 ---
 
 ## ADRs aceitas

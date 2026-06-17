@@ -4,19 +4,25 @@ Data de referencia: 2026-06-17
 
 ## Dashboard de status
 
-| Phase | Nome | Status | Gaps P1 | Gaps P2 | Proximo slice |
-|-------|------|--------|---------|---------|--------------|
+| Phase | Nome | Status | Gaps P1 proprios | Gaps P2 | Proximo slice |
+|-------|------|--------|------------------|---------|--------------|
 | 0 | Produto, Arquitetura e Fronteiras | `IMPLEMENTED` | 0 | 1 (doc HMAC desatualizada) | Slice documental |
-| 1 | Core Domain MVP e API | `IMPLEMENTED` | 3 | 2 | Slice 6-A (status ativo) |
+| 1 | Core Domain MVP e API | `IMPLEMENTED` | 0 proprios¹ | 2 | Slice 6-A (seguranca) |
 | 2 | Primeiro Adapter de Provider | `IMPLEMENTING` | 0 | 1 (assinatura webhook) | Slice 2-A (AbacatePay) |
-| 3 | Webhooks Externos e Internos | `IMPLEMENTING` | 1 (noop dispatcher) | 1 (assinatura provider) | Slice 7-A (dispatcher real) |
+| 3 | Webhooks Externos e Internos | `IMPLEMENTING` | 0 proprios² | 1 (assinatura provider) | Slice 7-A (dispatcher real) |
 | 4 | Multi-Provider | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 2 + Phase 6 |
 | 5 | Painel Admin | `NOT_STARTED` | 0 | 0 | Aguarda Phase 6 |
-| 6 | Seguranca e Confiabilidade | `IMPLEMENTING` | 4 (criticos) | 1 (audit log) | Slice 6-A |
-| 7 | Workers e Outbox | `IMPLEMENTING` | 1 (noop) | 1 (testes integracao) | Slice 7-A |
+| 6 | Seguranca e Confiabilidade | `IMPLEMENTING` | 4 (P1-1, P1-2, P1-3, P1-5) | 1 (audit log P2-3) | Slice 6-A |
+| 7 | Workers e Outbox | `IMPLEMENTING` | 1 (P1-4 noop dispatcher) | 1 (testes integracao) | Slice 7-A |
 | 8 | Conciliacao Financeira | `NOT_STARTED` | 0 | 0 | Aguarda Phase 4 + 7 |
 | 9 | Relatorios e Observabilidade | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 6 + 7 |
 | 10 | Evolucoes Futuras | `NOT_STARTED` | 0 | 0 | Backlog de produto |
+
+Notas:
+
+¹ Phase 1 tem 3 gaps que se manifestam no seu codigo (P1-1, P1-2, P1-3), mas a responsabilidade de corrigi-los e da Phase 6 (controles de seguranca e autorizacao). Phase 1 e considerada `IMPLEMENTED` porque entregou o dominio central. Nao e `VALIDATED` porque esses gaps existem.
+
+² Phase 3 originou o gap P1-4 (`NoopApplicationWebhookDispatcher`), mas a correc¸ao e escopo da Phase 7. A coluna "Gaps P1 proprios" reflete gaps cuja correcao e responsabilidade desta phase, nao onde o sintoma aparece.
 
 ---
 

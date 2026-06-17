@@ -270,3 +270,27 @@ Validacoes executadas neste ciclo de auditoria:
 - `tests/PaymentHub.UnitTests/Domain/*`
 - `tests/PaymentHub.UnitTests/Infrastructure/*`
 - `tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj`
+
+---
+
+## Nota sobre nomes de specs (adicionado em 2026-06-17 na correcao de bootstrap)
+
+Esta auditoria foi produzida antes da estrutura de specs ser consolidada. Os nomes de specs usados ao longo deste documento refletem os nomes existentes no momento da auditoria, alguns dos quais nao correspondem aos nomes atuais dos arquivos em `docs/specs/`.
+
+O conteudo dos achados permanece valido. Para navegar para as specs atuais, use o mapeamento abaixo.
+
+| Nome usado nesta auditoria | Nome atual em `docs/specs/` | Observacao |
+| -------------------------- | --------------------------- | ---------- |
+| `001-multi-tenancy.md` | `002-multitenancy-and-authentication.md` | Renomeado e consolidado com autenticacao. |
+| `002-api-authentication.md` | `002-multitenancy-and-authentication.md` | Consolidado no mesmo arquivo de multitenancy. |
+| `004-checkout-flow.md` | `005-checkout-creation.md` | Renomeado. |
+| `006-provider-integration.md` | `008-provider-adapters.md` | Renomeado; foco em adapter contract. |
+| `007-webhook-processing.md` | `006-provider-webhooks.md` + `007-inbox-outbox-workers.md` | Dividido em dois arquivos: webhooks externos e workers/outbox. |
+| `009-api-contract.md` | `009-api-contracts.md` | Correcao ortografica no nome (faltava 's'). |
+| `003-domain-model.md` | `003-domain-model.md` | Inalterado. |
+| `010-database-contract.md` | `010-database-contract.md` | Inalterado. |
+| `011-security-and-compliance.md` | `011-security-and-compliance.md` | Inalterado. |
+| `012-observability-and-audit.md` | `012-observability-and-audit.md` | Inalterado. |
+| `013-testing-strategy.md` | `013-testing-strategy.md` | Inalterado. |
+
+Para o indice completo de specs atuais, ver `docs/specs/000-spec-index.md`.

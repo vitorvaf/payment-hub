@@ -12,7 +12,9 @@ Endpoint: `POST /api/v1/checkouts`
 | `Idempotency-Key` | chave única por checkout | sim |
 | `X-Provider` | `Fake`, `AbacatePay`, `Stripe`, `MercadoPago` | opcional |
 
-> Se `X-Provider` for omitido, o sistema usa o `DefaultProvider` configurado para a `ApplicationClient`. Se nenhum estiver cadastrado, usa `Fake` em `Development`.
+> Se `X-Provider` for omitido, o sistema usa o `DefaultProvider` configurado para a `ApplicationClient`.
+> Se nenhum default estiver cadastrado, usa `Fake` somente em `Development`.
+> Um `X-Provider` explícito inválido ou sem conta ativa falha; o sistema não troca silenciosamente para outro provider.
 
 ## Payload
 
@@ -57,6 +59,7 @@ Endpoint: `POST /api/v1/checkouts`
 ## Comportamento
 
 - `Idempotency-Key` é obrigatório. Se a mesma chave for reutilizada com o mesmo payload, o endpoint retorna o pagamento já criado (200/201).
+- Se a mesma chave for reutilizada com payload diferente, o endpoint retorna `409 Conflict` e não chama o provider.
 - Se o `Idempotency-Key` for enviado sem `IdempotencyKey` no banco, um novo pagamento é criado.
 - O status inicial é `Created`. Após o provider confirmar, o `WebhookProcessorWorker` atualiza para `Pending` (na resposta imediata o status é `Pending` porque o adapter Fake já confirma a URL).
 - Um `OutboxEvent` é gerado com `eventType = payment.checkout.created` e despachado via `OutboxDispatcherWorker` para a `WebhookUrl` da `ApplicationClient`.
@@ -67,7 +70,8 @@ Endpoint: `POST /api/v1/checkouts`
 |--------|-------|
 | 400 | Payload inválido ou `Idempotency-Key` ausente |
 | 401 | API Key inválida ou Tenant/Application incompatíveis |
-| 422 | Provider falhou ao criar checkout |
+| 409 | `Idempotency-Key` reutilizada com payload diferente |
+| 422 | Provider inválido, provider sem conta ativa, default ausente ou falha ao criar checkout |
 
 ## Exemplo de curl
 

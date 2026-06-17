@@ -53,12 +53,25 @@ Consolidar regras de seguranca obrigatorias para o MVP.
 - String assinada: `{timestamp}.{rawBody}`.
 - Tolerancia recomendada para consumidores: 5 minutos.
 - Prevencao de replay: consumidor deve rejeitar timestamp fora da janela e aplicar idempotencia por `eventId`.
+- `rawBody` deve ser o corpo HTTP exatamente como recebido, sem reserializar o JSON.
+- Secrets de webhook nunca devem aparecer em logs, erros ou traces.
+- Assinaturas devem ser comparadas em tempo constante quando a plataforma permitir.
 
 Exemplo:
 
 ```text
-signed_payload = "{timestamp}.{rawBody}"
-signature = HMACSHA256(webhookSecret, signed_payload)
+rawBody = corpo HTTP exatamente como enviado
+timestamp = valor do header X-PaymentHub-Timestamp
+signedPayload = timestamp + "." + rawBody
+signature = HMACSHA256(webhookSecret, UTF8(signedPayload))
+signatureFormat = hexadecimal lowercase
+```
+
+Exemplo C# para gerar hex:
+
+```csharp
+var signatureBytes = HMACSHA256.HashData(secretBytes, signedPayloadBytes);
+var signature = Convert.ToHexString(signatureBytes).ToLowerInvariant();
 ```
 
 ## Criterios de aceite

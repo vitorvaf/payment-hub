@@ -44,12 +44,58 @@ Estados:
 | `WebhookEvent` | `Pending`, `Processing`, `Processed`, `Failed` |
 | `OutboxEvent` | `Pending`, `Processing`, `Sent`, `Failed` |
 
+Payload minimo de webhook interno:
+
+```json
+{
+  "eventId": "guid",
+  "eventType": "payment.approved",
+  "paymentId": "guid",
+  "externalReference": "job-search-order-123",
+  "amount": 2990,
+  "currency": "BRL",
+  "provider": "Fake",
+  "status": "Approved",
+  "providerPaymentId": "fake_123",
+  "occurredAt": "2026-06-16T12:00:00Z"
+}
+```
+
+- `eventId` e obrigatorio e deve ser o id estavel do `OutboxEvent`.
+- Reprocessar o mesmo `OutboxEvent` mantem o mesmo `eventId`.
+- `eventType` e obrigatorio e deve refletir o tipo do evento interno.
+- Consumidores devem usar `eventId` como chave preferencial de idempotencia; `paymentId + status` e apenas fallback.
+- `occurredAt` representa o momento do evento no Payment Hub.
+
+Headers de webhook interno:
+
+```http
+Content-Type: application/json
+X-PaymentHub-Event-Id: <eventId>
+X-PaymentHub-Event-Type: payment.approved
+X-PaymentHub-Timestamp: <unix_time_seconds>
+X-PaymentHub-Signature: <hex_lowercase_hmac_sha256>
+```
+
+Contrato HMAC:
+
+```text
+rawBody = corpo HTTP exatamente como enviado
+timestamp = valor do header X-PaymentHub-Timestamp
+signedPayload = timestamp + "." + rawBody
+signature = HMACSHA256(webhookSecret, UTF8(signedPayload))
+signatureFormat = hexadecimal lowercase
+```
+
+O consumidor deve rejeitar timestamps fora da tolerancia recomendada de 5 minutos e comparar assinaturas em tempo constante quando possivel.
+
 ## Criterios de aceite
 
 - Evento processado com sucesso e marcado como finalizado.
 - Falhas temporarias sao reagendadas.
 - Falha permanente preserva erro e permite acao manual futura.
-- Webhook interno e assinado com HMAC.
+- Webhook interno e assinado com HMAC sobre `{timestamp}.{rawBody}`.
+- Reprocessamento do mesmo `OutboxEvent` preserva `eventId`; a assinatura pode variar se o timestamp variar.
 
 ## Testes esperados
 

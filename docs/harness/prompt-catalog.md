@@ -4,23 +4,36 @@ Use estes prompts como ponto de partida para tarefas recorrentes.
 
 ## Discovery inicial do projeto
 
-Leia `AGENTS.md` e `docs/harness/*`. Inspecione a estrutura do repositório, identifique stack, padrões, lacunas e comandos de validação disponíveis. Não implemente nada. Responda com contexto entendido, riscos, perguntas abertas e próximo plano recomendado.
+Leia `AGENTS.md` e `docs/harness/*`.
+Inspecione a estrutura do repositório, identifique stack, padrões, lacunas
+e comandos de validação disponíveis.
+Não implemente nada.
+Responda com contexto entendido, riscos, perguntas abertas e próximo plano recomendado.
 
 ## Nova feature
 
-Implemente a feature descrita abaixo em pequenos slices. Antes de alterar código, faça discovery, liste arquivos envolvidos, proponha plano, confirme fora de escopo, implemente o menor slice útil, rode validações aplicáveis e registre evidências.
+Implemente a feature descrita abaixo em pequenos slices.
+Antes de alterar código, faça discovery, liste arquivos envolvidos, proponha plano,
+confirme fora de escopo, implemente o menor slice útil,
+rode validações aplicáveis e registre evidências.
 
 ## Revisão de arquitetura
 
-Revise a arquitetura da mudança abaixo considerando Clean Architecture, limites de domínio, escopo do MVP, evolução futura para broker e risco de overengineering. Priorize problemas concretos com arquivo/linha quando possível e proponha correções.
+Revise a arquitetura da mudança abaixo considerando Clean Architecture,
+limites de domínio, escopo do MVP, evolução futura para broker e risco de overengineering.
+Priorize problemas concretos com arquivo/linha quando possível e proponha correções.
 
 ## Revisão de segurança
 
-Revise a mudança abaixo contra `docs/harness/security.md`. Procure secrets, logs sensíveis, API Keys em claro, ausência de idempotência, webhooks sem persistência prévia, falta de assinatura e exposição de dados sensíveis.
+Revise a mudança abaixo contra `docs/harness/security.md`.
+Procure secrets, logs sensíveis, API Keys em claro, ausência de idempotência,
+webhooks sem persistência prévia, falta de assinatura e exposição de dados sensíveis.
 
 ## Criação de testes
 
-Crie ou ajuste testes para o comportamento abaixo. Priorize testes unitários de domínio, testes de Application para casos de uso e testes de integração quando o comportamento envolver banco, API ou Worker.
+Crie ou ajuste testes para o comportamento abaixo.
+Priorize testes unitários de domínio, testes de Application para casos de uso
+e testes de integração quando o comportamento envolver banco, API ou Worker.
 
 ## Investigação de bug
 

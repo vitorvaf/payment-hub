@@ -43,6 +43,9 @@ Formalizar entidades, invariantes e dados proibidos no dominio do Payment Hub.
 - Alteracoes de dominio preservam invariantes acima.
 - Novos value objects recebem configuracao de persistencia quando necessario.
 - Status externos sao mapeados para status canonico antes de atualizar `Payment`.
+- `PaymentAttemptStatus` descreve o resultado financeiro/processual registrado para a tentativa, nao apenas se o webhook foi parseado sem erro.
+- Webhook com status canonico negativo (`Rejected`, `Failed`, `Expired`, `Cancelled`) deve registrar `PaymentAttemptStatus.Failed`.
+- Webhook `Approved`, `Refunded` ou `Chargeback` pode registrar `PaymentAttemptStatus.Succeeded` no MVP, preservando a limitacao de modelagem para revisao futura.
 
 ## Testes esperados
 

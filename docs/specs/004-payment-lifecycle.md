@@ -57,6 +57,8 @@ Eventos internos:
 
 - Toda mudanca relevante de status gera `OutboxEvent` quando a aplicacao cliente precisa ser notificada.
 - `PaymentAttempt` registra comunicacoes com provider ou processamento relevante.
+- `PaymentAttemptStatus.Succeeded` nao significa apenas "webhook processado"; para webhooks, ele deve representar status financeiro positivo (`Approved`, `Refunded`, `Chargeback` no MVP).
+- `Rejected`, `Failed`, `Expired` e `Cancelled` devem registrar attempt como `Failed`.
 - Status bruto do provider nunca vaza como status canonico de API.
 
 ## Testes esperados
@@ -75,4 +77,11 @@ Eventos internos:
 
 ## Gap identificado
 
-O dominio cria `Payment` com `Status = Created`. O handler atual persiste o `Payment`, chama o provider na mesma transacao logica e, em sucesso, usa `AttachProviderResult(..., PaymentStatus.Pending)` antes de salvar. Na pratica, o banco tende a observar o pagamento ja em `Pending` quando a criacao termina. Esse comportamento e aceitavel para o MVP, mas a spec consolida a semantica: `Created` e o estado interno antes do provider; `Pending` e o estado da resposta bem-sucedida.
+O dominio cria `Payment` com `Status = Created`.
+O handler atual persiste o `Payment`, chama o provider na mesma transacao logica e,
+em sucesso, usa `AttachProviderResult(..., PaymentStatus.Pending)` antes de salvar.
+Na pratica, o banco tende a observar o pagamento ja em `Pending` quando a criacao termina.
+
+Esse comportamento e aceitavel para o MVP, mas a spec consolida a semantica:
+`Created` e o estado interno antes do provider;
+`Pending` e o estado da resposta bem-sucedida.

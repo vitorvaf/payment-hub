@@ -20,7 +20,8 @@ Definir a integracao esperada com Job Search / Quero Vagas Tech.
 - Payment Hub nao libera recurso diretamente.
 - Job Search decide a regra de negocio pos-pagamento.
 - Job Search deve validar assinatura HMAC.
-- Job Search deve tratar eventos duplicados com idempotencia propria usando `eventId` ou `paymentId + status`.
+- Job Search deve tratar eventos duplicados com idempotencia propria usando `eventId` como chave preferencial.
+- `paymentId + status` pode ser fallback operacional, mas nao substitui `eventId`.
 
 ## Contratos
 
@@ -54,15 +55,23 @@ Payload interno esperado:
 ```
 
 `eventId` deve ser o id do `OutboxEvent`. Reprocessar o mesmo `OutboxEvent` mantem o mesmo `eventId`, mesmo que uma nova tentativa use outro timestamp de assinatura.
+`eventType` e obrigatorio e deve bater com o header `X-PaymentHub-Event-Type`.
+`occurredAt` representa o momento do evento no Payment Hub.
 
 Headers de assinatura:
 
 ```http
+Content-Type: application/json
+X-PaymentHub-Event-Id: <eventId>
+X-PaymentHub-Event-Type: payment.approved
 X-PaymentHub-Timestamp: <unix_time_seconds>
 X-PaymentHub-Signature: <hex_lowercase_hmac_sha256>
 ```
 
-A string assinada e `{timestamp}.{rawBody}` usando UTF-8. O Job Search deve rejeitar timestamps fora da janela recomendada de 5 minutos e aplicar idempotencia por `eventId`.
+A string assinada e `{timestamp}.{rawBody}` usando UTF-8.
+`rawBody` deve ser o corpo HTTP exatamente como recebido, sem reserializar o JSON.
+O Job Search deve rejeitar timestamps fora da janela recomendada de 5 minutos,
+comparar assinatura em tempo constante quando possivel e aplicar idempotencia por `eventId`.
 
 Eventos:
 

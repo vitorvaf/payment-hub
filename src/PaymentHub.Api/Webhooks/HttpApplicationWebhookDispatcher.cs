@@ -57,6 +57,7 @@ public sealed class HttpApplicationWebhookDispatcher : IApplicationWebhookDispat
             Content = new StringContent(outboxEvent.PayloadJson, Encoding.UTF8, "application/json")
         };
         request.Headers.TryAddWithoutValidation("X-PaymentHub-Event", outboxEvent.EventType);
+        request.Headers.TryAddWithoutValidation("X-PaymentHub-Event-Type", outboxEvent.EventType);
         request.Headers.TryAddWithoutValidation("X-PaymentHub-Event-Id", outboxEvent.Id.ToString());
         request.Headers.TryAddWithoutValidation("X-PaymentHub-Tenant", outboxEvent.TenantId.ToString());
         request.Headers.TryAddWithoutValidation("X-PaymentHub-Application", outboxEvent.ApplicationId.ToString());

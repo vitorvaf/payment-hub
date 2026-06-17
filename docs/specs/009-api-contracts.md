@@ -87,6 +87,7 @@ X-Application-Id: <application_id>
 - Erros: `400` para payload invalido ou idempotency ausente; `409` para mesma key com payload diferente; `422` para provider invalido, provider sem conta ativa, default ausente ou falha do provider.
 - Tabelas afetadas: `payments`, `payment_attempts`, `idempotency_keys`, `outbox_events`.
 - Eventos gerados: `payment.checkout.created` em sucesso.
+- Payload interno gerado deve conter `eventId`, `eventType`, `paymentId`, `externalReference`, `amount`, `currency`, `provider`, `status`, `providerPaymentId` e `occurredAt`.
 - Specs relacionadas: `005-checkout-creation.md`, `004-payment-lifecycle.md`.
 
 ### `GET /api/v1/payments/{paymentId}`
@@ -123,6 +124,7 @@ X-Application-Id: <application_id>
 - Erros: `400` para JSON invalido quando o controller precisar ler tipo do evento; `422` para provider desconhecido ou falha de persistencia.
 - Tabelas afetadas: `webhook_events`; processamento posterior pode atualizar `payments`, `payment_attempts` e `outbox_events`.
 - Eventos gerados: eventos internos de pagamento quando houver transicao canonica valida.
+- Eventos internos enviados por Outbox devem usar `eventId` como id estavel de idempotencia do consumidor e `eventType` como tipo do evento.
 - Specs relacionadas: `006-provider-webhooks.md`, `007-inbox-outbox-workers.md`, `008-provider-adapters.md`.
 
 ### `GET /health`

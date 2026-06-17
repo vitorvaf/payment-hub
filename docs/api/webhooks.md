@@ -66,7 +66,8 @@ Configurada no campo `WebhookUrl` da `ApplicationClient` (definida no momento de
 | Header | Descrição |
 |--------|-----------|
 | `Content-Type` | `application/json` |
-| `X-PaymentHub-Event` | Tipo do evento (ex.: `payment.approved`) |
+| `X-PaymentHub-Event-Type` | Tipo do evento (ex.: `payment.approved`) |
+| `X-PaymentHub-Event` | Alias legado do tipo do evento |
 | `X-PaymentHub-Event-Id` | Id do `OutboxEvent` |
 | `X-PaymentHub-Tenant` | Tenant id |
 | `X-PaymentHub-Application` | Application id |
@@ -102,9 +103,10 @@ string payload = await ReadBodyAsync(httpRequest);
 string secret = "shared-secret-between-payment-hub-and-app";
 string timestamp = httpRequest.Headers["X-PaymentHub-Timestamp"].ToString();
 string signedPayload = $"{timestamp}.{payload}";
-string expectedSignature = HMACSHA256.HashData(
+byte[] signatureBytes = HMACSHA256.HashData(
     Encoding.UTF8.GetBytes(secret),
     Encoding.UTF8.GetBytes(signedPayload));
+string expectedSignature = Convert.ToHexString(signatureBytes).ToLowerInvariant();
 string presentedSignature = httpRequest.Headers["X-PaymentHub-Signature"].ToString();
 
 if (!CryptographicOperations.FixedTimeEquals(
@@ -115,7 +117,12 @@ if (!CryptographicOperations.FixedTimeEquals(
 }
 ```
 
-O consumidor deve rejeitar timestamps fora de uma janela curta, recomendada em 5 minutos, para reduzir risco de replay. A idempotência do consumo deve usar `eventId`; reprocessar o mesmo `OutboxEvent` preserva o mesmo `eventId`, embora a assinatura possa mudar se o timestamp mudar.
+O `payload` deve ser o body bruto exatamente como recebido; não reserialize o JSON antes de validar.
+O consumidor deve rejeitar timestamps fora de uma janela curta, recomendada em 5 minutos,
+para reduzir risco de replay.
+A idempotência do consumo deve usar `eventId`;
+reprocessar o mesmo `OutboxEvent` preserva o mesmo `eventId`,
+embora a assinatura possa mudar se o timestamp mudar.
 
 ### Resposta esperada
 

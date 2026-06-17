@@ -146,7 +146,7 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
             var previousStatus = payment.Status;
             var statusChanged = payment.ApplyProviderStatus(newStatus, providerPaymentId);
             payment.RegisterAttempt(
-                newStatus == PaymentStatus.Approved ? PaymentAttemptStatus.Succeeded : PaymentAttemptStatus.Succeeded,
+                ToAttemptStatus(newStatus),
                 providerPaymentId,
                 null);
 
@@ -200,4 +200,12 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
         }
         return await _payments.GetByProviderPaymentIdAsync(webhook.ProviderCode.ToString(), providerPaymentId, cancellationToken);
     }
+
+    private static PaymentAttemptStatus ToAttemptStatus(PaymentStatus status)
+        => status switch
+        {
+            PaymentStatus.Approved or PaymentStatus.Refunded or PaymentStatus.Chargeback => PaymentAttemptStatus.Succeeded,
+            PaymentStatus.Rejected or PaymentStatus.Cancelled or PaymentStatus.Expired or PaymentStatus.Failed => PaymentAttemptStatus.Failed,
+            _ => PaymentAttemptStatus.Pending
+        };
 }

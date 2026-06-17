@@ -55,6 +55,15 @@ Cenarios:
 | fora de ordem | Evitar regressao de status terminal |
 | pagamento inexistente | Marcar `Failed` com `last_error` claro e nao gerar `OutboxEvent` |
 
+Attempts gerados por webhooks:
+
+| Status canonico | `PaymentAttemptStatus` |
+|-----------------|------------------------|
+| `Approved` | `Succeeded` |
+| `Rejected`, `Failed`, `Expired`, `Cancelled` | `Failed` |
+| `Pending`, `Processing`, `RequiresAction` | `Pending` |
+| `Refunded`, `Chargeback` | `Succeeded` no MVP; revisar modelagem futura se houver fluxo financeiro dedicado |
+
 ## Criterios de aceite
 
 - Recebimento e rapido e nao depende do provider ficar disponivel.

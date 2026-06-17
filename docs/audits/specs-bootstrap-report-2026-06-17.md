@@ -2,7 +2,7 @@
 
 ## Resumo
 
-O bootstrap completo de specs foi executado em 2026-06-17. Foram criados 11 novos arquivos de documentacao cobrindo roadmap (3 arquivos), specs formais (2 arquivos), harness de processo (5 arquivos) e este relatorio de auditoria.
+O bootstrap completo de specs foi executado em 2026-06-17. Foram criados 12 novos arquivos de documentacao cobrindo: roadmap (3 arquivos), specs formais (2 arquivos), auditoria (1 arquivo — matriz de aderencia), harness de processo (5 arquivos) e este relatorio.
 
 Nenhum arquivo existente foi modificado. Nenhum arquivo de codigo foi alterado. O build continua limpo e todos os 64 testes unitarios continuam passando.
 
@@ -31,7 +31,26 @@ Total de arquivos criados: **12**
 
 ## Arquivos atualizados
 
-Nenhum arquivo existente foi modificado neste bootstrap.
+Nenhum arquivo existente foi modificado no bootstrap original (commit `48ff259`).
+
+Os arquivos abaixo foram criados ou alterados na correcao de aderencia executada em 2026-06-17:
+
+### Arquivos criados na correcao
+
+| Arquivo | Tipo | Descricao |
+| ------- | ---- | --------- |
+| `docs/adr/000-adr-index.md` | ADR | Indice de ADRs: ADR-0001 a 0005 aceitas + ADR-0006 a 0009 propostas |
+| `docs/audits/payment-hub-current-state-audit-2026-06-17.md` | Auditoria | Estado atual do repositorio: codigo, specs, testes, gaps e premissas nao validadas |
+| `docs/harness/payment-hub-execution-guide.md` | Harness | Guia completo de execucao do agente: fluxo de 9 etapas, regras e referencias |
+
+### Arquivos alterados na correcao
+
+| Arquivo | Motivo |
+| ------- | ------ |
+| `docs/audits/specs-bootstrap-report-2026-06-17.md` | Correcao de contagem: resumo e linha de git status alterados de 11 para 12 arquivos |
+| `docs/specs/000-spec-index.md` | Status padronizados: `DRAFT`/`REVIEW`/`ACCEPTED` substituidos pelo enum oficial do harness |
+| `docs/roadmap/001-development-timeline.md` | Secao `Timeline Decision` adicionada; linha em branco antes da legenda corrigida (MD032) |
+| `docs/roadmap/000-payment-hub-roadmap.md` | Caveats explicitos adicionados em Phase 0 (gap P2) e Phase 1 (3 gaps P1 com descricao e slices) |
 
 ---
 
@@ -126,7 +145,7 @@ Nenhum gap P0 identificado. Confirmado pela auditoria anterior (`spec-adherence-
 
 | Validacao | Comando | Resultado esperado | Resultado real | Status |
 |-----------|---------|-------------------|---------------|--------|
-| Git status | `git status --short` | Apenas novos arquivos de docs | 11 arquivos novos untracked | `PASS` |
+| Git status | `git status --short` | Apenas novos arquivos de docs | 12 arquivos novos untracked | `PASS` |
 | Restore | `dotnet restore PaymentHub.slnx` | All projects up-to-date | All projects up-to-date | `PASS` |
 | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings | `PASS` |
 | Unit tests | `dotnet test PaymentHub.slnx` | 64 testes passando | 64 testes passando | `PASS` |

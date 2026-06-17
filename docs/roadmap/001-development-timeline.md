@@ -5,6 +5,7 @@
 Registrar a ordem recomendada de implementacao das fases, com prioridade, esforco, risco e dependencias explicitadas.
 
 Legenda de prioridade:
+
 - `P0` — bloqueia o MVP; sem isso nao ha produto
 - `P1` — necessario para MVP confiavel e operacional
 - `P2` — importante pos-MVP; entrega valor incremental
@@ -30,12 +31,33 @@ Legenda de prioridade:
 
 ---
 
+## Timeline Decision
+
+### Phase 7 antes de Phase 6 (Ordem 5 e 6 na tabela)
+
+**Decisao:** Phase 7 (Workers, Outbox e Processamento Assincrono) foi posicionada na ordem 5, antes de Phase 6 (Seguranca e Confiabilidade, ordem 6).
+
+**Justificativa:** O gap P1-4 (`NoopApplicationWebhookDispatcher` registrado no Worker host) esta tecnicamente dentro do escopo de Phase 7, mas sua correc¸ao e prerequisito para que o ciclo de webhook interno seja considerado minimamente seguro. Corrigir o dispatcher antes de enrijecer a seguranca evita que a Phase 6 seja validada com um componente no-op no caminho critico.
+
+**Risco associado:** Phase 7 depende de Phase 3, que ainda tem o mesmo gap P1-4. Isso significa que ao iniciar Phase 7, o gap P1-4 ja existe no baseline e e o primeiro alvo (Slice 7-A). Se Slice 7-A for adiado dentro de Phase 7, o gap continua exposto durante toda a Phase 7. Mitigacao: Slice 7-A deve ser o primeiro slice de Phase 7, sem excecao.
+
+**Alternativa considerada:** Colocar Phase 6 antes de Phase 7. Vantagem: todos os gaps de autorizacao e segredos seriam resolvidos primeiro. Desvantagem: o ciclo de outbox permanece com dispatcher no-op durante toda a Phase 6, tornando qualquer teste de outbox irreal. A escolha foi priorizar o dispatcher real para que os testes de Phase 6 possam validar o ciclo completo.
+
+**Esta decisao esta refletida em:**
+
+- Tabela de timeline (ordem 5 = Phase 7, ordem 6 = Phase 6).
+- `docs/roadmap/002-phase-status-board.md` (Bloco A de trabalho lista Slice 7-A em segundo lugar, imediatamente apos Slice 6-A).
+- `docs/audits/specs-bootstrap-report-2026-06-17.md` (timeline sugerida).
+
+---
+
 ## Notas de sequenciamento
 
 ### Por que Phase 7 antes de Phase 6?
 
 Phase 7 (Workers) depende de Phase 3 (Outbox baseline) e entrega o dispatcher HTTP real que resolve um gap P1 critico.
 Phase 6 (Seguranca) pode evoluir em paralelo, mas o dispatcher real precisa existir antes de considerar o ciclo de vida de outbox como seguro.
+Ver secao "Timeline Decision" acima para detalhes da decisao e riscos.
 
 ### Por que Phase 6 antes de Phase 4?
 

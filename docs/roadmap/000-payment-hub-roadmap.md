@@ -17,6 +17,8 @@ Status possivel: `NOT_STARTED` | `DISCOVERY` | `SPEC_DRAFTED` | `SPEC_REVIEW_REQ
 | Esforco | M |
 | Risco | LOW |
 
+> **Nota:** Phase 0 esta implementada. Ha 1 gap P2 aberto: `docs/architecture/overview.md` descreve formato antigo de assinatura HMAC (Slice documental pendente). Nenhum gap P0 ou P1.
+
 ### Objetivo
 
 Estabelecer as fronteiras do produto, decisoes arquiteturais fundamentais e vocabulario compartilhado.
@@ -62,6 +64,14 @@ Phase 0 esta completa. Existe gap de documentacao P3: `docs/architecture/overvie
 | Prioridade | P0 |
 | Esforco | L |
 | Risco | MEDIUM |
+
+> **Atencao — Gaps P1 abertos:** Phase 1 esta implementada no nucleo de dominio, mas possui 3 gaps P1 de autorizacao/seguranca que ainda nao foram corrigidos.
+>
+> - **P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados (`ApiKeyAuthenticationMiddleware`).
+> - **P1-2** — `RegisterProviderAccountHandler` usa tenant/application do corpo da requisicao, nao do contexto autenticado.
+> - **P1-3** — Endpoints de criacao de tenant/application nao tem politica de autenticacao definida (deadlock de bootstrap).
+>
+> Estes gaps serao resolvidos pelos Slices 6-A, 6-B e 6-D de Phase 6. Phase 1 nao deve ser considerada `VALIDATED` enquanto esses gaps estiverem abertos. Ver `docs/audits/spec-adherence-audit-2026-06-17.md` para detalhes.
 
 ### Objetivo
 

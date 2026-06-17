@@ -8,6 +8,10 @@ Payment Gateway MVP.
 
 Construir um orquestrador de pagamentos multitenant para centralizar integrações com provedores de pagamento e oferecer uma API consistente para produtos consumidores.
 
+## Spec Driven Development
+
+As especificações formais em `docs/specs/` são a fonte de verdade para contratos de implementação. ADRs em `docs/adr/` registram decisões arquiteturais aceitas.
+
 ## Consumidores previstos
 
 - Job Search / Quero Vagas Tech.

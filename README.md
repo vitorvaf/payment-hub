@@ -13,12 +13,20 @@ Swagger em `http://localhost:8080/swagger` quando `ASPNETCORE_ENVIRONMENT=Develo
 
 ## Documentação
 
+- [Specs formais](docs/specs/README.md)
+- [ADRs](docs/adr/)
 - [Visão geral da arquitetura](docs/architecture/overview.md)
 - [Decisões do MVP](docs/architecture/mvp-decisions.md)
 - [API: criação de checkout](docs/api/create-checkout.md)
 - [API: webhooks](docs/api/webhooks.md)
 - [Schema do banco](docs/database/schema.md)
 - [Setup local](docs/development/local-setup.md)
+
+## Spec Driven Development
+
+As especificações formais ficam em `docs/specs/`.
+Antes de alterar qualquer fluxo de pagamento, webhooks, workers, segurança ou banco, leia a spec relacionada.
+Decisões arquiteturais aceitas ficam em `docs/adr/`.
 
 ## Stack
 

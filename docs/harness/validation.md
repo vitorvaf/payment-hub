@@ -10,6 +10,12 @@ dotnet build
 dotnet test
 ```
 
+## Specs e ADRs
+
+- Conferir se a alteração respeita a spec relacionada em `docs/specs`.
+- Atualizar spec quando houver mudança de contrato.
+- Atualizar ADR quando houver nova decisão arquitetural.
+
 ## Build
 
 - `dotnet restore`: restaura dependências.

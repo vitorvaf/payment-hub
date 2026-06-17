@@ -9,7 +9,9 @@ Antes de alterar código, qualquer agente deve ler este arquivo e seguir as refe
 - [Validação](docs/harness/validation.md)
 - [Segurança](docs/harness/security.md)
 - [Aprendizados](docs/harness/learnings.md)
+- [Specs formais](docs/specs/README.md)
+- [ADRs](docs/adr/)
 - [Instruções do GitHub Copilot](.github/instructions/)
 - [Configuração OpenCode](.opencode/)
 
-Regra central: trabalhe em pequenos slices, valide o que foi alterado, registre evidências e atualize aprendizados relevantes em `docs/harness/learnings.md`.
+Regra central: trabalhe em pequenos slices, leia a spec relacionada antes de alterar código, valide o que foi alterado, registre evidências e atualize aprendizados relevantes em `docs/harness/learnings.md`.

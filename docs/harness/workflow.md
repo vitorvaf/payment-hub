@@ -16,6 +16,8 @@ Todo agente deve seguir este ciclo:
 
 - Ler `AGENTS.md`.
 - Ler os documentos relevantes em `docs/harness`.
+- Ler a spec relacionada em `docs/specs` antes de alterar código.
+- Ler ADRs em `docs/adr` quando a tarefa tocar decisões arquiteturais.
 - Inspecionar a estrutura atual do repositório.
 - Identificar stack, padrões, testes existentes e arquivos relacionados.
 

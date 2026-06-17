@@ -11,6 +11,20 @@ Este arquivo registra aprendizados técnicos do projeto que devem orientar futur
 - Evidência:
 - Impacto para próximos agentes:
 
+### 2026-06-17 - `docs/specs` passa a ser fonte de verdade de contratos
+
+- Contexto: O projeto ja tinha docs explicativas em `docs/architecture`, `docs/api` e `docs/database`, mas faltava uma camada formal de specs para guiar implementacoes por contrato.
+- Decisão: Criar `docs/specs/` como fonte de verdade para escopo, dominio, autenticacao, checkout, webhooks, Inbox/Outbox, adapters, API, banco, seguranca, observabilidade, testes e integracao Job Search. Criar `docs/adr/` para decisoes arquiteturais aceitas.
+- Evidência: Specs `000` a `014` e ADRs `ADR-0001` a `ADR-0005` foram adicionados; `AGENTS.md`, `README.md` e harness passaram a apontar para specs/ADRs.
+- Impacto para próximos agentes: Antes de alterar codigo, leia a spec relacionada. Se o codigo divergir da spec, registre o gap e corrija em slice pequeno. Mudancas de contrato devem atualizar a spec; decisoes arquiteturais novas devem atualizar/criar ADR.
+
+### 2026-06-17 - Gaps documentais para revisao futura
+
+- Contexto: Durante a formalizacao das specs, foi identificado que a semantica `Created`/`Pending` do checkout precisava ser consolidada e que `.env.example` pode aparecer compactado em contextos raw.
+- Decisão: Documentar em `docs/specs/004-payment-lifecycle.md` que `Created` e o estado interno antes do provider e `Pending` e o estado persistido/retornado apos `checkoutUrl`. Nao alterar `.env.example` nesta tarefa docs-only.
+- Evidência: `Payment` inicia em `Created`; `CreateCheckoutHandler` chama `AttachProviderResult(..., PaymentStatus.Pending)` antes de salvar a resposta de sucesso.
+- Impacto para próximos agentes: Auditorias futuras devem comparar codigo e specs antes de mudar comportamento; se reformatarem `.env.example`, manter apenas valores fake e nao commitar `.env` real.
+
 ### 2026-06-16 - OpenCode rejeita chaves top-level `agents` e `notes`
 
 - Contexto: A execução de `opencode` abortava porque `.opencode/opencode.json` continha as chaves top-level `agents` e `notes`.

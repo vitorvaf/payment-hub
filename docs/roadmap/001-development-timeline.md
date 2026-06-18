@@ -77,7 +77,7 @@ Conciliacao financeira (Phase 8) depende de dados reais de providers em producao
 
 Com base no estado atual (`IMPLEMENTING` em Phases 2, 3, 6, 7) e nos achados P1 da auditoria:
 
-1. **Slice 6-A**: Enforcement de `TenantStatus.Active` e `ApplicationStatus.Active` no middleware.
+1. **Slice 6-A**: Enforcement de `TenantStatus.Active` e `ApplicationStatus.Active` no middleware. `[CONCLUIDO 2026-06-17]`
 2. **Slice 7-A**: Substituir `NoopApplicationWebhookDispatcher` por dispatcher HTTP real no Worker host.
 3. **Slice 6-B**: Corrigir `RegisterProviderAccountHandler` para derivar tenant/application do `ITenantContext`.
 4. **Slice 6-C**: Proteger `ApplicationClient.WebhookSecret` em repouso.

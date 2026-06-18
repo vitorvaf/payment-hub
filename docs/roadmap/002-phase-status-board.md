@@ -12,7 +12,7 @@ Data de referencia: 2026-06-17
 | 3 | Webhooks Externos e Internos | `IMPLEMENTING` | 0 proprios² | 1 (assinatura provider) | Slice 7-A (dispatcher real) |
 | 4 | Multi-Provider | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 2 + Phase 6 |
 | 5 | Painel Admin | `NOT_STARTED` | 0 | 0 | Aguarda Phase 6 |
-| 6 | Seguranca e Confiabilidade | `IMPLEMENTING` | 4 (P1-1, P1-2, P1-3, P1-5) | 1 (audit log P2-3) | Slice 6-A |
+| 6 | Seguranca e Confiabilidade | `IMPLEMENTING` | 3 (P1-2, P1-3, P1-5) | 1 (audit log P2-3) | Slice 6-B (RegisterProviderAccount via ITenantContext) |
 | 7 | Workers e Outbox | `IMPLEMENTING` | 1 (P1-4 noop dispatcher) | 1 (testes integracao) | Slice 7-A |
 | 8 | Conciliacao Financeira | `NOT_STARTED` | 0 | 0 | Aguarda Phase 4 + 7 |
 | 9 | Relatorios e Observabilidade | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 6 + 7 |
@@ -21,6 +21,8 @@ Data de referencia: 2026-06-17
 Notas:
 
 ¹ Phase 1 tem 3 gaps que se manifestam no seu codigo (P1-1, P1-2, P1-3), mas a responsabilidade de corrigi-los e da Phase 6 (controles de seguranca e autorizacao). Phase 1 e considerada `IMPLEMENTED` porque entregou o dominio central. Nao e `VALIDATED` porque esses gaps existem.
+
+> **Slice 6-A (2026-06-17):** gap P1-1 (Tenant/application inativos nao bloqueiam fluxos autenticados) foi resolvido pelo `ApiKeyAuthenticationMiddleware`, que agora consulta `Tenant.Status` e `ApplicationClient.Status` apos validar a API Key. Restam 3 gaps P1 da Phase 6: P1-2 (provider account via body), P1-3 (politica de bootstrap) e P1-5 (`WebhookSecret` em texto claro).
 
 ² Phase 3 originou o gap P1-4 (`NoopApplicationWebhookDispatcher`), mas a correc¸ao e escopo da Phase 7. A coluna "Gaps P1 proprios" reflete gaps cuja correcao e responsabilidade desta phase, nao onde o sintoma aparece.
 
@@ -71,7 +73,7 @@ Fonte: `docs/audits/spec-adherence-audit-2026-06-17.md`
 Resolver os 5 gaps P1 antes de qualquer expansao de provider ou feature de produto.
 
 ```
-Slice 6-A  Enforcement de TenantStatus.Active + ApplicationStatus.Active
+Slice 6-A  Enforcement de TenantStatus.Active + ApplicationStatus.Active   [CONCLUIDO 2026-06-17]
 Slice 7-A  Substituir NoopApplicationWebhookDispatcher por HTTP real
 Slice 6-B  RegisterProviderAccountHandler via ITenantContext
 Slice 6-C  Protecao de ApplicationClient.WebhookSecret em repouso
@@ -103,10 +105,10 @@ Slice 2-T  Testes do adapter e documentacao
 
 | Indicador | Valor atual | Meta |
 |-----------|------------|------|
-| Testes unitarios passando | 64 | >= 64 |
+| Testes unitarios passando | 70 | >= 64 |
 | Testes de integracao | 0 | >= 5 |
 | Gaps P0 abertos | 0 | 0 |
-| Gaps P1 abertos | 5 | 0 |
+| Gaps P1 abertos | 4 | 0 |
 | Gaps P2 abertos | 5 | <= 2 |
 | Build status | Limpo | Limpo |
 | Providers reais funcionais | 0 (Fake ok) | >= 1 (AbacatePay) |

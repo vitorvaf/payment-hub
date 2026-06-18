@@ -43,4 +43,16 @@ public class ApplicationClient
         DefaultProvider = provider;
         UpdatedAt = DateTime.UtcNow;
     }
+
+    public void Suspend()
+    {
+        Status = ApplicationStatus.Suspended;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    public void Activate()
+    {
+        Status = ApplicationStatus.Active;
+        UpdatedAt = DateTime.UtcNow;
+    }
 }

@@ -11,16 +11,20 @@ public sealed class ApiKeyAuthenticationMiddleware
     private const string ApplicationHeader = "X-Application-Id";
 
     private readonly RequestDelegate _next;
+    private readonly ILogger<ApiKeyAuthenticationMiddleware> _logger;
 
-    public ApiKeyAuthenticationMiddleware(RequestDelegate next)
+    public ApiKeyAuthenticationMiddleware(RequestDelegate next, ILogger<ApiKeyAuthenticationMiddleware> logger)
     {
         _next = next;
+        _logger = logger;
     }
 
     public async Task InvokeAsync(
         HttpContext context,
         IApiKeyRepository apiKeys,
-        IApiKeyHasher hasher)
+        IApiKeyHasher hasher,
+        ITenantRepository tenants,
+        IApplicationClientRepository applications)
     {
         if (IsAnonymousPath(context.Request.Path))
         {
@@ -32,14 +36,14 @@ public sealed class ApiKeyAuthenticationMiddleware
             || string.IsNullOrWhiteSpace(authHeader.ToString())
             || !authHeader.ToString().StartsWith(BearerPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            await WriteUnauthorized(context, "Missing or invalid Authorization header.");
+            await WriteUnauthorized(context);
             return;
         }
 
         var presentedKey = authHeader.ToString()[BearerPrefix.Length..].Trim();
         if (string.IsNullOrWhiteSpace(presentedKey))
         {
-            await WriteUnauthorized(context, "Empty API key.");
+            await WriteUnauthorized(context);
             return;
         }
 
@@ -47,7 +51,7 @@ public sealed class ApiKeyAuthenticationMiddleware
         var apiKey = await apiKeys.FindByHashAsync(hash, context.RequestAborted);
         if (apiKey is null || !apiKey.Active)
         {
-            await WriteUnauthorized(context, "Invalid API key.");
+            await WriteUnauthorized(context);
             return;
         }
 
@@ -55,18 +59,54 @@ public sealed class ApiKeyAuthenticationMiddleware
         var headerApplicationId = context.Request.Headers[ApplicationHeader].ToString();
         if (!Guid.TryParse(headerTenantId, out var tenantId) || tenantId == Guid.Empty)
         {
-            await WriteUnauthorized(context, "Missing or invalid X-Tenant-Id header.");
+            await WriteUnauthorized(context);
             return;
         }
         if (!Guid.TryParse(headerApplicationId, out var applicationId) || applicationId == Guid.Empty)
         {
-            await WriteUnauthorized(context, "Missing or invalid X-Application-Id header.");
+            await WriteUnauthorized(context);
             return;
         }
 
         if (apiKey.TenantId != tenantId || apiKey.ApplicationId != applicationId)
         {
-            await WriteUnauthorized(context, "API key does not match tenant or application.");
+            await WriteUnauthorized(context);
+            return;
+        }
+
+        var tenant = await tenants.GetByIdAsync(tenantId, context.RequestAborted);
+        if (tenant is null)
+        {
+            _logger.LogWarning(
+                "Rejected request for unknown tenant {TenantId} (apiKeyId {ApiKeyId}).",
+                tenantId, apiKey.Id);
+            await WriteUnauthorized(context);
+            return;
+        }
+        if (tenant.Status != Domain.Enums.TenantStatus.Active)
+        {
+            _logger.LogWarning(
+                "Rejected request for inactive tenant {TenantId} (apiKeyId {ApiKeyId}, status {TenantStatus}).",
+                tenantId, apiKey.Id, tenant.Status);
+            await WriteForbidden(context);
+            return;
+        }
+
+        var application = await applications.GetByTenantAndIdAsync(tenantId, applicationId, context.RequestAborted);
+        if (application is null)
+        {
+            _logger.LogWarning(
+                "Rejected request for unknown application {ApplicationId} under tenant {TenantId} (apiKeyId {ApiKeyId}).",
+                applicationId, tenantId, apiKey.Id);
+            await WriteUnauthorized(context);
+            return;
+        }
+        if (application.Status != Domain.Enums.ApplicationStatus.Active)
+        {
+            _logger.LogWarning(
+                "Rejected request for inactive application {ApplicationId} under tenant {TenantId} (apiKeyId {ApiKeyId}, status {ApplicationStatus}).",
+                applicationId, tenantId, apiKey.Id, application.Status);
+            await WriteForbidden(context);
             return;
         }
 
@@ -90,14 +130,25 @@ public sealed class ApiKeyAuthenticationMiddleware
             || p == "/favicon.ico";
     }
 
-    private static async Task WriteUnauthorized(HttpContext context, string message)
+    private static async Task WriteUnauthorized(HttpContext context)
     {
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsJsonAsync(new
         {
             error = "unauthorized",
-            message
+            message = "Unauthorized"
+        });
+    }
+
+    private static async Task WriteForbidden(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = "forbidden",
+            message = "Client application is not allowed to access this resource."
         });
     }
 }

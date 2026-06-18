@@ -56,10 +56,12 @@ Nenhum achado P0 comprovado nesta auditoria.
 
 ### P1 - Alto
 
-1. Tenant/application inativos nao bloqueiam fluxos autenticados.
+1. ~~Tenant/application inativos nao bloqueiam fluxos autenticados.~~ `[RESOLVIDO 2026-06-17 pelo Slice 6-A]`
    - Specs: `001-multi-tenancy.md`, `002-api-authentication.md`, `004-checkout-flow.md`.
-   - Evidencia: `ApiKeyAuthenticationMiddleware` valida API Key e escopo, mas nao carrega `Tenant.Status` nem `ApplicationClient.Status`; `CreateCheckoutHandler` usa existencia de tenant/app sem verificar status.
-   - Risco: tenant suspenso ou application inativa podem continuar criando checkouts se a API Key permanecer ativa.
+   - Evidencia original: `ApiKeyAuthenticationMiddleware` validava API Key e escopo, mas nao carregava `Tenant.Status` nem `ApplicationClient.Status`; `CreateCheckoutHandler` usava existencia de tenant/app sem verificar status.
+   - Correcao: middleware agora consulta `ITenantRepository.GetByIdAsync` e `IApplicationClientRepository.GetByTenantAndIdAsync`; retorna `403 Forbidden` quando `TenantStatus != Active` ou `ApplicationStatus != Active`. Tenant ou application inexistente continua retornando `401` para nao vazar existencia.
+   - Risco original: tenant suspenso ou application inativa podiam continuar criando checkouts se a API Key permanecesse ativa.
+   - Ver `docs/audits/slice-6a-active-status-enforcement-report-2026-06-17.md` para detalhes do slice.
 
 2. `RegisterProviderAccountHandler` usa tenant/application do corpo, nao do contexto autenticado.
    - Specs: `001-multi-tenancy.md`, `002-api-authentication.md`, `011-security-and-compliance.md`.

@@ -14,6 +14,8 @@ Status possivel: `NOT_STARTED` | `DISCOVERY` | `SPEC_DRAFTED` | `SPEC_REVIEW_REQ
 | `IMPLEMENTED` | Codigo mesclado e build/testes passando. Pode conter gaps P1 **pertencentes a outra phase** (ex.: Phase 1 tem gaps de seguranca que sao escopo da Phase 6). **Nao significa pronto para producao.** |
 | `VALIDATED` | `IMPLEMENTED` + todos os criterios de aceite verificados + nenhum gap P1 aberto de responsabilidade desta phase. Unico status que indica que a phase pode ser considerada completa para fins operacionais. |
 
+> **Slice 6-A (2026-06-17):** gap P1-1 (Tenant/application inativos nao bloqueiam fluxos autenticados) foi resolvido. O `ApiKeyAuthenticationMiddleware` agora consulta `Tenant.Status` e `ApplicationClient.Status` apos validar a API Key e aplica `403 Forbidden` para tenant ou application inativos. Phase 6 segue `IMPLEMENTING` porque os gaps P1-2, P1-3 e P1-5 continuam abertos.
+
 > **Regra para o agente:** `IMPLEMENTED` nao equivale a `VALIDATED`. Uma phase marcada como `IMPLEMENTED` pode ainda ter gaps que a impedem de ir para producao. Verificar sempre a secao "Gaps conhecidos" da phase e os registros em `docs/audits/spec-adherence-audit-2026-06-17.md` antes de tratar a phase como finalizada.
 
 ---
@@ -333,7 +335,7 @@ Corrigir os gaps de seguranca e autorizacao identificados na auditoria e enrijec
 
 Esta phase e responsavel por 4 dos 5 gaps P1 da auditoria de 2026-06-17:
 
-- **P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados → Slice 6-A.
+- **P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados → Slice 6-A. `[RESOLVIDO 2026-06-17]`
 - **P1-2** — `RegisterProviderAccountHandler` usa tenant/application do body → Slice 6-B.
 - **P1-3** — Endpoints de bootstrap/admin sem politica de autenticacao → Slice 6-D + ADR-0006.
 - **P1-5** — `ApplicationClient.WebhookSecret` persistido em texto claro → Slice 6-C + ADR-0007.

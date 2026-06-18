@@ -29,9 +29,9 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | Phase | Slice | Tipo | Comando ou Acao | Resultado esperado | Resultado real | Status | Data |
 |-------|-------|------|-----------------|--------------------|---------------|--------|------|
 | 1 | Domain | Build | `dotnet build PaymentHub.slnx` | 0 erros | 0 erros, 0 warnings | `PASS` | 2026-06-17 |
-| 1 | Domain | Unit | `dotnet test PaymentHub.slnx` | >= 64 testes passando | 64 passando | `PASS` | 2026-06-17 |
+| 1 | Domain | Unit | `dotnet test PaymentHub.slnx` | >= 70 testes passando | 70 passando | `PASS` | 2026-06-17 |
 | 1 | Checkout | Unit | `dotnet test --filter CreateCheckoutHandlerTests` | Todos passando | Passando | `PASS` | 2026-06-17 |
-| 1 | Middleware | Unit | `dotnet test --filter ApiKeyAuthenticationMiddlewareTests` | Todos passando | Passando | `PASS` | 2026-06-17 |
+| 1 | Middleware | Unit | `dotnet test --filter ApiKeyAuthenticationMiddlewareTests` | Todos passando | 11 passando | `PASS` | 2026-06-17 |
 | 1 | Integration | Integration | `dotnet test PaymentHub.IntegrationTests` | >= 1 teste passando | 0 testes descobertos | `FAIL` | 2026-06-17 |
 
 ---
@@ -61,8 +61,14 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 
 | Phase | Slice | Tipo | Comando ou Acao | Resultado esperado | Resultado real | Status | Data |
 |-------|-------|------|-----------------|--------------------|---------------|--------|------|
-| 6 | 6-A | Unit | Tenant inativo retorna 403 | Teste passa | `PENDING` | `PENDING` | — |
-| 6 | 6-A | Unit | Application inativa retorna 403 | Teste passa | `PENDING` | `PENDING` | — |
+| 6 | 6-A | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings | `PASS` | 2026-06-17 |
+| 6 | 6-A | Unit | `dotnet test --filter ApiKeyAuthenticationMiddlewareTests` | Todos passando | 11 testes passando | `PASS` | 2026-06-17 |
+| 6 | 6-A | Unit | Tenant inativo retorna 403 | Teste passa | Passou | `PASS` | 2026-06-17 |
+| 6 | 6-A | Unit | Application inativa retorna 403 | Teste passa | Passou | `PASS` | 2026-06-17 |
+| 6 | 6-A | Unit | API Key ausente/invalida continua retornando 401 | Teste passa | Passou | `PASS` | 2026-06-17 |
+| 6 | 6-A | Unit | Tenant/application ativos prosseguem normalmente | Teste passa | Passou | `PASS` | 2026-06-17 |
+| 6 | 6-A | Unit | API Key nao vaza em logs/responses | Teste de leak | Passou | `PASS` | 2026-06-17 |
+| 6 | 6-A | Unit | Tenant/application inexistentes retornam 401 sem leak | Teste passa | Passou | `PASS` | 2026-06-17 |
 | 6 | 6-B | Unit | ProviderAccount usa contexto autenticado | Teste passa | `PENDING` | `PENDING` | — |
 | 6 | 6-C | Unit | WebhookSecret criptografado no banco | Nao visievel em texto claro | `PENDING` | `PENDING` | — |
 | 6 | 6-D | Unit | AuditLog gravado em acao admin | Log presente no banco | `PENDING` | `PENDING` | — |

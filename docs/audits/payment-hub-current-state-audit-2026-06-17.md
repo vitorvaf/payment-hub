@@ -12,7 +12,7 @@ Este documento e complementar a `spec-adherence-audit-2026-06-17.md`, que regist
 
 O Payment Hub tem uma base de codigo funcional que cobre o fluxo central do MVP: criacao de checkout hospedado com provider Fake, autenticacao por API Key, persistencia em Postgres via EF Core 10, processamento assincrono de webhooks externos e publicacao de eventos internos via Outbox. O build esta limpo, 64 testes unitarios passam e a arquitetura segue Clean Architecture com separacao de camadas.
 
-Os principais gaps sao: dispatcher HTTP real ausente no worker de Outbox (P1), enforcement de status ativo de tenant/application ausente (P1), protecao de `webhook_secret` ausente (P1), testes de integracao ausentes (P2) e adapters de providers reais ainda em skeleton (P2).
+Os principais gaps sao: dispatcher HTTP real ausente no worker de Outbox (P1-4), protecao de `webhook_secret` ausente (P1-5), testes de integracao ausentes (P2) e adapters de providers reais ainda em skeleton (P2). O enforcement de status ativo de tenant/application (P1-1) foi resolvido pelo Slice 6-A em 2026-06-17: tenants e applications inativos sao bloqueados no middleware com `403 Forbidden`.
 
 ---
 
@@ -106,7 +106,7 @@ Os principais gaps sao: dispatcher HTTP real ausente no worker de Outbox (P1), e
 
 | Middleware | Arquivo | Responsabilidade |
 | ---------- | ------- | ---------------- |
-| `ApiKeyAuthenticationMiddleware` | `Auth/ApiKeyAuthenticationMiddleware.cs` | Valida Bearer token e headers de tenant/application; nao verifica status ativo (gap P1) |
+| `ApiKeyAuthenticationMiddleware` | `Auth/ApiKeyAuthenticationMiddleware.cs` | Valida Bearer token, headers de tenant/application e status ativo; retorna 403 para tenant ou application inativa (Slice 6-A `[RESOLVIDO 2026-06-17]`) |
 | `HttpTenantContext` | `Auth/HttpTenantContext.cs` | Implementacao de `ITenantContext` a partir da request |
 
 #### Webhooks
@@ -261,7 +261,7 @@ Com base no estado atual, a ordem recomendada e:
 
 1. **ADR-0006** — Formalizar politica de bootstrap/admin.
 2. **ADR-0007** — Decidir protecao de `WebhookSecret`.
-3. **Slice 6-A** — Enforcement de status ativo no middleware.
+3. ~~**Slice 6-A** — Enforcement de status ativo no middleware.~~ `[CONCLUIDO 2026-06-17]`
 4. **Slice 7-A** — Substituir `NoopApplicationWebhookDispatcher` por HTTP real no Worker host.
 5. **Slice 6-B** — Corrigir `RegisterProviderAccountHandler` para usar `ITenantContext`.
 6. **Slice 6-C** — Proteger `WebhookSecret` conforme ADR-0007.

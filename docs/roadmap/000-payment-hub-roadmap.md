@@ -77,13 +77,13 @@ Phase 0 esta completa. Existe gap de documentacao P3: `docs/architecture/overvie
 | Esforco | L |
 | Risco | MEDIUM |
 
-> **Atencao — Gaps P1 abertos:** Phase 1 esta implementada no nucleo de dominio, mas possui 3 gaps P1 de autorizacao/seguranca que ainda nao foram corrigidos.
+> **Atencao — Gaps P1 abertos:** Phase 1 esta implementada no nucleo de dominio, mas possui 2 gaps P1 de autorizacao/seguranca que ainda nao foram corrigidos.
 >
-> - **P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados (`ApiKeyAuthenticationMiddleware`).
+> - ~~**P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados (`ApiKeyAuthenticationMiddleware`).~~ `[RESOLVIDO 2026-06-17 — Slice 6-A]`
 > - **P1-2** — `RegisterProviderAccountHandler` usa tenant/application do corpo da requisicao, nao do contexto autenticado.
 > - **P1-3** — Endpoints de criacao de tenant/application nao tem politica de autenticacao definida (deadlock de bootstrap).
 >
-> Estes gaps serao resolvidos pelos Slices 6-A, 6-B e 6-D de Phase 6. Phase 1 nao deve ser considerada `VALIDATED` enquanto esses gaps estiverem abertos. Ver `docs/audits/spec-adherence-audit-2026-06-17.md` para detalhes.
+> P1-1 foi resolvido pelo Slice 6-A (enforcement de `TenantStatus.Active` e `ApplicationStatus.Active` no middleware). Os gaps P1-2 e P1-3 serao resolvidos pelos Slices 6-B e 6-D de Phase 6. Phase 1 nao deve ser considerada `VALIDATED` enquanto esses gaps estiverem abertos. Ver `docs/audits/spec-adherence-audit-2026-06-17.md` para detalhes.
 
 ### Objetivo
 
@@ -123,7 +123,7 @@ Implementar entidades de dominio, enums, invariantes, repositorios, API autentic
 
 ### Gaps conhecidos (P1)
 
-- Tenant/application inativos nao bloqueiam fluxos autenticados.
+- ~~Tenant/application inativos nao bloqueiam fluxos autenticados.~~ `[RESOLVIDO 2026-06-17 — Slice 6-A]`
 - `RegisterProviderAccountHandler` usa tenant/application do corpo, nao do contexto autenticado.
 - Endpoints de criacao de tenant/application divergem entre spec e middleware quanto a autenticacao.
 

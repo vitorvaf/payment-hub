@@ -4,7 +4,7 @@
 
 O `main` esta majoritariamente aderente ao desenho do MVP: checkout hospedado, multi-tenant por API Key, Postgres com Inbox/Outbox, status canonico, idempotencia de checkout, webhooks de provider persistidos antes do processamento e ausencia de campos de cartao/CVV no dominio principal.
 
-Nao foram identificados achados P0 comprovados nesta auditoria. Os principais riscos restantes sao P1: validacao insuficiente de status ativo de tenant/application em fluxos autenticados, cadastro de provider account aceitando tenant/application do corpo em vez do contexto autenticado, bootstrap/admin endpoints divergentes da documentacao, worker de outbox registrado com dispatcher no-op e armazenamento do `webhook_secret` em texto claro.
+Nao foram identificados achados P0 comprovados nesta auditoria. Os principais riscos restantes sao P1: cadastro de provider account aceitando tenant/application do corpo em vez do contexto autenticado (P1-2), bootstrap/admin endpoints divergentes da documentacao (P1-3), worker de outbox registrado com dispatcher no-op (P1-4) e armazenamento do `webhook_secret` em texto claro (P1-5). O gap P1-1 (enforcement de status ativo de tenant/application) foi resolvido pelo Slice 6-A em 2026-06-17.
 
 Tambem ha gaps P2 relevantes em testes de integracao, validacao de assinatura de webhooks externos, audit logs de acoes administrativas e constraints relacionais no banco.
 
@@ -36,10 +36,10 @@ O repositorio implementa bem o fluxo essencial do MVP, mas ainda nao deve ser co
 | Área | Spec | Código | Testes | Status | Observações |
 | --- | --- | --- | --- | --- | --- |
 | Escopo MVP | `000-mvp-scope.md`, ADR-0003 | Checkout hospedado, sem cartao/CVV, sem split/wallet/recorrencia | Coberto indiretamente por dominio e busca estatica | ✅ Aderente | Nao ha campos de cartao/CVV nas entidades principais. |
-| Multi-tenancy | `001-multi-tenancy.md` | Tenant/application presentes nas entidades e repositorios | Cobertura unitaria parcial | ⚠️ Parcial | Isolamento existe, mas falta enforcement de status ativo e ha fluxo que aceita tenant/application do body. |
-| API Key | `002-api-authentication.md`, ADR-0004 | Middleware valida Bearer, tenant e application headers contra hash | Testes unitarios do middleware | ⚠️ Parcial | Nao valida status de tenant/application; endpoints de bootstrap/admin divergem da doc. |
+| Multi-tenancy | `001-multi-tenancy.md` | Tenant/application presentes nas entidades e repositorios; enforcement de status ativo implementado no middleware (Slice 6-A `[RESOLVIDO 2026-06-17]`) | Cobertura unitaria parcial | ⚠️ Parcial | Ha fluxo que aceita tenant/application do body em provider accounts (gap P1-2). |
+| API Key | `002-api-authentication.md`, ADR-0004 | Middleware valida Bearer, tenant e application headers contra hash; valida `TenantStatus.Active` e `ApplicationStatus.Active` com 403 para entidades inativas (Slice 6-A `[RESOLVIDO 2026-06-17]`) | Testes unitarios do middleware (11 testes) | ⚠️ Parcial | Endpoints de bootstrap/admin divergem da doc (gap P1-3). |
 | Modelo de dominio | `003-domain-model.md` | Entidades e enums principais implementados | Testes de `Payment`, `WebhookEvent`, `OutboxEvent` e mappers | ✅ Aderente | Status canonico e invariantes centrais existem. |
-| Checkout | `004-checkout-flow.md` | `CreateCheckoutHandler` cria payment, tentativa e idempotencia | Testes unitarios de handler | ⚠️ Parcial | Idempotencia coberta; falta teste API/e2e e bloqueio por tenant/app inativo. |
+| Checkout | `004-checkout-flow.md` | `CreateCheckoutHandler` cria payment, tentativa e idempotencia; bloqueio por tenant/app inativo garantido pelo middleware (Slice 6-A) | Testes unitarios de handler | ⚠️ Parcial | Idempotencia coberta; falta teste API/e2e. |
 | Providers | `006-provider-integration.md`, ADR-0005 | Router e adapters fake/Stripe/MercadoPago/AbacatePay skeleton | Testes do fake e mapper | ⚠️ Parcial | Credenciais sao criptografadas, mas providers reais ainda sao skeleton e assinatura externa nao e validada. |
 | Webhooks de provider | `007-webhook-processing.md` | Controller persiste inbox; worker processa e cria outbox | Testes unitarios do handler | ⚠️ Parcial | Deduplicacao existe; assinatura externa e teste e2e faltam. |
 | Banco | `010-database-contract.md`, ADR-0002 | Tabelas, indices e unique keys principais existem | Sem testes de integracao | ⚠️ Parcial | Poucas FKs no banco; projeto de integracao nao possui testes descobertos. |
@@ -116,7 +116,7 @@ Nenhum achado P0 comprovado nesta auditoria.
 
 ## Gaps entre specs e código
 
-- Specs esperam bloqueio por tenant/application inativo; codigo verifica existencia e API Key, mas nao status ativo.
+- ~~Specs esperam bloqueio por tenant/application inativo; codigo verifica existencia e API Key, mas nao status ativo.~~ `[RESOLVIDO 2026-06-17 — Slice 6-A: middleware agora consulta Tenant.Status e ApplicationClient.Status e retorna 403 para entidades inativas]`
 - Specs tratam endpoints de tenant/application como anonimo/admin futuro; codigo exige API Key por middleware para estes caminhos.
 - Specs de webhooks externos mencionam validacao de assinatura quando suportada; codigo ainda nao implementa validacao nos adapters reais.
 - Specs de auditoria esperam registro de acoes sensiveis; codigo possui infraestrutura, mas nao grava eventos administrativos.
@@ -143,7 +143,7 @@ Nenhum achado P0 comprovado nesta auditoria.
 - `webhook_secret` de application fica persistido sem protecao em repouso equivalente a provider credentials.
 - Provider webhook signatures ainda nao sao validadas nos adapters reais.
 - Cadastro de provider account nao vincula explicitamente o tenant/application do request ao contexto autenticado.
-- Status de tenant/application nao e enforceado em autenticacao/checkout.
+- ~~Status de tenant/application nao e enforceado em autenticacao/checkout.~~ `[RESOLVIDO 2026-06-17 — Slice 6-A]`
 - Bootstrap/admin endpoints precisam de politica explicita para evitar tanto deadlock operacional quanto exposicao indevida.
 
 ## Gaps de documentação

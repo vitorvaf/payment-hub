@@ -42,6 +42,7 @@ Consolidar regras de seguranca obrigatorias para o MVP.
 | Webhook interno | `X-PaymentHub-Signature` HMAC-SHA256 sobre `timestamp.rawBody` |
 | Webhook externo | Assinatura validada quando provider oferecer |
 | Logs | correlation id e contexto sem secrets |
+| Tenant/application em endpoints autenticados | Derivado exclusivamente de `ITenantContext` (populado pelo middleware). Body/headers do request nunca podem sobrescrever tenant/application. |
 
 ### HMAC de webhook interno
 

@@ -16,6 +16,8 @@ Status possivel: `NOT_STARTED` | `DISCOVERY` | `SPEC_DRAFTED` | `SPEC_REVIEW_REQ
 
 > **Slice 6-A (2026-06-17):** gap P1-1 (Tenant/application inativos nao bloqueiam fluxos autenticados) foi resolvido. O `ApiKeyAuthenticationMiddleware` agora consulta `Tenant.Status` e `ApplicationClient.Status` apos validar a API Key e aplica `403 Forbidden` para tenant ou application inativos. Phase 6 segue `IMPLEMENTING` porque os gaps P1-2, P1-3 e P1-5 continuam abertos.
 
+> **Slice 6-B (2026-06-18):** gap P1-2 (`RegisterProviderAccountHandler` usava `tenantId`/`applicationId` do body em vez do contexto autenticado) foi resolvido. `ProviderAccount` agora e criado exclusivamente a partir de `ITenantContext` resolvido pelo middleware. Body do `POST /api/v1/provider-accounts` nao aceita mais `tenantId`/`applicationId`. Restam 2 gaps P1 proprios da Phase 6: P1-3 (politica de bootstrap) e P1-5 (`WebhookSecret` em texto claro).
+
 > **Regra para o agente:** `IMPLEMENTED` nao equivale a `VALIDATED`. Uma phase marcada como `IMPLEMENTED` pode ainda ter gaps que a impedem de ir para producao. Verificar sempre a secao "Gaps conhecidos" da phase e os registros em `docs/audits/spec-adherence-audit-2026-06-17.md` antes de tratar a phase como finalizada.
 
 ---
@@ -77,13 +79,13 @@ Phase 0 esta completa. Existe gap de documentacao P3: `docs/architecture/overvie
 | Esforco | L |
 | Risco | MEDIUM |
 
-> **Atencao — Gaps P1 abertos:** Phase 1 esta implementada no nucleo de dominio, mas possui 2 gaps P1 de autorizacao/seguranca que ainda nao foram corrigidos.
+> **Atencao — Gaps P1 abertos:** Phase 1 esta implementada no nucleo de dominio, mas possui 1 gap P1 de autorizacao/seguranca que ainda nao foi corrigido.
 >
 > - ~~**P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados (`ApiKeyAuthenticationMiddleware`).~~ `[RESOLVIDO 2026-06-17 — Slice 6-A]`
-> - **P1-2** — `RegisterProviderAccountHandler` usa tenant/application do corpo da requisicao, nao do contexto autenticado.
+> - ~~**P1-2** — `RegisterProviderAccountHandler` usa tenant/application do corpo da requisicao, nao do contexto autenticado.~~ `[RESOLVIDO 2026-06-18 — Slice 6-B]`
 > - **P1-3** — Endpoints de criacao de tenant/application nao tem politica de autenticacao definida (deadlock de bootstrap).
 >
-> P1-1 foi resolvido pelo Slice 6-A (enforcement de `TenantStatus.Active` e `ApplicationStatus.Active` no middleware). Os gaps P1-2 e P1-3 serao resolvidos pelos Slices 6-B e 6-D de Phase 6. Phase 1 nao deve ser considerada `VALIDATED` enquanto esses gaps estiverem abertos. Ver `docs/audits/spec-adherence-audit-2026-06-17.md` para detalhes.
+> P1-1 foi resolvido pelo Slice 6-A (enforcement de `TenantStatus.Active` e `ApplicationStatus.Active` no middleware). P1-2 foi resolvido pelo Slice 6-B (`ProviderAccount` agora e criado a partir de `ITenantContext`; body nao aceita mais `tenantId`/`applicationId`). P1-3 sera resolvido pelo Slice 6-D de Phase 6. Phase 1 nao deve ser considerada `VALIDATED` enquanto P1-3 estiver aberto. Ver `docs/audits/spec-adherence-audit-2026-06-17.md` para detalhes.
 
 ### Objetivo
 
@@ -124,7 +126,7 @@ Implementar entidades de dominio, enums, invariantes, repositorios, API autentic
 ### Gaps conhecidos (P1)
 
 - ~~Tenant/application inativos nao bloqueiam fluxos autenticados.~~ `[RESOLVIDO 2026-06-17 — Slice 6-A]`
-- `RegisterProviderAccountHandler` usa tenant/application do corpo, nao do contexto autenticado.
+- ~~`RegisterProviderAccountHandler` usa tenant/application do corpo, nao do contexto autenticado.~~ `[RESOLVIDO 2026-06-18 — Slice 6-B]`
 - Endpoints de criacao de tenant/application divergem entre spec e middleware quanto a autenticacao.
 
 ---
@@ -336,7 +338,7 @@ Corrigir os gaps de seguranca e autorizacao identificados na auditoria e enrijec
 Esta phase e responsavel por 4 dos 5 gaps P1 da auditoria de 2026-06-17:
 
 - **P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados → Slice 6-A. `[RESOLVIDO 2026-06-17]`
-- **P1-2** — `RegisterProviderAccountHandler` usa tenant/application do body → Slice 6-B.
+- **P1-2** — `RegisterProviderAccountHandler` usa tenant/application do body → Slice 6-B. `[RESOLVIDO 2026-06-18]`
 - **P1-3** — Endpoints de bootstrap/admin sem politica de autenticacao → Slice 6-D + ADR-0006.
 - **P1-5** — `ApplicationClient.WebhookSecret` persistido em texto claro → Slice 6-C + ADR-0007.
 

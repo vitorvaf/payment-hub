@@ -1,5 +1,6 @@
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
+using PaymentHub.Application.Abstractions.Context;
 using PaymentHub.Application.Tenants;
 using PaymentHub.Application.Tenants.Dtos;
 
@@ -11,13 +12,16 @@ public class ProviderAccountsController : ControllerBase
 {
     private readonly IRegisterProviderAccountHandler _handler;
     private readonly IValidator<RegisterProviderAccountRequestDto> _validator;
+    private readonly ITenantContext _tenantContext;
 
     public ProviderAccountsController(
         IRegisterProviderAccountHandler handler,
-        IValidator<RegisterProviderAccountRequestDto> validator)
+        IValidator<RegisterProviderAccountRequestDto> validator,
+        ITenantContext tenantContext)
     {
         _handler = handler;
         _validator = validator;
+        _tenantContext = tenantContext;
     }
 
     [HttpPost]
@@ -31,7 +35,19 @@ public class ProviderAccountsController : ControllerBase
             return BadRequest(new { error = "validation_failed", details = validation.Errors });
         }
 
-        var result = await _handler.HandleAsync(request, cancellationToken);
+        Guid tenantId;
+        Guid applicationId;
+        try
+        {
+            tenantId = _tenantContext.TenantId;
+            applicationId = _tenantContext.ApplicationId;
+        }
+        catch (InvalidOperationException)
+        {
+            return Unauthorized(new { error = "unauthorized", message = "Unauthorized" });
+        }
+
+        var result = await _handler.HandleAsync(tenantId, applicationId, request, cancellationToken);
         return Created($"/api/v1/provider-accounts/{result.Id}", result);
     }
 }

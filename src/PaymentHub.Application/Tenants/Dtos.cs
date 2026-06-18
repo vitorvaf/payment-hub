@@ -22,8 +22,6 @@ public sealed record ApplicationClientResponseDto(
     string? ApiKey);
 
 public sealed record RegisterProviderAccountRequestDto(
-    Guid TenantId,
-    Guid ApplicationId,
     ProviderCode ProviderCode,
     ProviderEnvironment Environment,
     string Name,

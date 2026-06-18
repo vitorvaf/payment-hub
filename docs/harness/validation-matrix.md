@@ -69,7 +69,15 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | 6 | 6-A | Unit | Tenant/application ativos prosseguem normalmente | Teste passa | Passou | `PASS` | 2026-06-17 |
 | 6 | 6-A | Unit | API Key nao vaza em logs/responses | Teste de leak | Passou | `PASS` | 2026-06-17 |
 | 6 | 6-A | Unit | Tenant/application inexistentes retornam 401 sem leak | Teste passa | Passou | `PASS` | 2026-06-17 |
-| 6 | 6-B | Unit | ProviderAccount usa contexto autenticado | Teste passa | `PENDING` | `PENDING` | — |
+| 6 | 6-B | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings | `PASS` | 2026-06-18 |
+| 6 | 6-B | Unit | `dotnet test PaymentHub.slnx` | Todos os testes passando | 85 testes passando | `PASS` | 2026-06-18 |
+| 6 | 6-B | Unit | `ProviderAccount` e criado com `tenantId`/`applicationId` do contexto | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-B | Unit | Body com `tenantId`/`applicationId` divergente nao afeta a operacao | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-B | Unit | Contexto ausente (tenant/application `Guid.Empty`) nao cria `ProviderAccount` | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-B | Unit | Resposta de `POST /api/v1/provider-accounts` nao expoe `ApiKey`, `Secret` ou `EncryptedCredentials` | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-B | Unit | Repositorio recebe `ProviderAccount` no escopo correto | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-B | Unit | Caminho feliz continua funcionando | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-B | Unit | `ApiKeyAuthenticationMiddleware` continua passando 11 testes (sem regressao) | Teste passa | 11 testes passando | `PASS` | 2026-06-18 |
 | 6 | 6-C | Unit | WebhookSecret criptografado no banco | Nao visievel em texto claro | `PENDING` | `PENDING` | — |
 | 6 | 6-D | Unit | AuditLog gravado em acao admin | Log presente no banco | `PENDING` | `PENDING` | — |
 | 6 | 6-D | Manual | Criar tenant via API sem API Key previa | Retorno esperado sem deadlock operacional | `PENDING` | `PENDING` | — |

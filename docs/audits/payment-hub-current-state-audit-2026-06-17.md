@@ -12,7 +12,7 @@ Este documento e complementar a `spec-adherence-audit-2026-06-17.md`, que regist
 
 O Payment Hub tem uma base de codigo funcional que cobre o fluxo central do MVP: criacao de checkout hospedado com provider Fake, autenticacao por API Key, persistencia em Postgres via EF Core 10, processamento assincrono de webhooks externos e publicacao de eventos internos via Outbox. O build esta limpo, 64 testes unitarios passam e a arquitetura segue Clean Architecture com separacao de camadas.
 
-Os principais gaps sao: dispatcher HTTP real ausente no worker de Outbox (P1-4), protecao de `webhook_secret` ausente (P1-5), testes de integracao ausentes (P2) e adapters de providers reais ainda em skeleton (P2). O enforcement de status ativo de tenant/application (P1-1) foi resolvido pelo Slice 6-A em 2026-06-17: tenants e applications inativos sao bloqueados no middleware com `403 Forbidden`.
+Os principais gaps sao: dispatcher HTTP real ausente no worker de Outbox (P1-4), protecao de `webhook_secret` ausente (P1-5), testes de integracao ausentes (P2) e adapters de providers reais ainda em skeleton (P2). O enforcement de status ativo de tenant/application (P1-1) foi resolvido pelo Slice 6-A em 2026-06-17: tenants e applications inativos sao bloqueados no middleware com `403 Forbidden`. O gap P1-2 (`ProviderAccount` usando tenant/application do body) foi resolvido pelo Slice 6-B em 2026-06-18: `ProviderAccount` agora e criado exclusivamente a partir de `ITenantContext` resolvido pelo middleware.
 
 ---
 
@@ -208,7 +208,7 @@ Os principais gaps sao: dispatcher HTTP real ausente no worker de Outbox (P1-4),
 | ID | Descricao | Evidencia no codigo | Slice sugerido |
 | -- | --------- | ------------------- | -------------- |
 | ~~P1-1~~ | Tenant/application inativos nao bloqueiam fluxos autenticados | `ApiKeyAuthenticationMiddleware` agora consulta `Tenant.Status` e `ApplicationClient.Status`; 403 para entidades inativas | Slice 6-A `[RESOLVIDO 2026-06-17]` |
-| P1-2 | `RegisterProviderAccountHandler` usa tenant/application do body, nao do contexto | `ProviderAccountsController` passa body ao handler sem derivar do `ITenantContext` | Slice 6-B |
+| P1-2 | `RegisterProviderAccountHandler` usa tenant/application do body, nao do contexto | `ProviderAccountsController` agora deriva `tenantId`/`applicationId` de `ITenantContext`; body nao aceita mais esses campos | Slice 6-B `[RESOLVIDO 2026-06-18]` |
 | P1-3 | Endpoints de bootstrap/admin sem politica explicita de autenticacao | `TenantsController` e `ApplicationsController` sem mecanismo claro para primeiro uso | Slice 6-D + ADR-0006 |
 | P1-4 | Worker de Outbox usa `NoopApplicationWebhookDispatcher` | `PaymentHub.Worker/Program.cs` registra `Noop`; `HttpApplicationWebhookDispatcher` nao esta no host worker | Slice 7-A |
 | P1-5 | `ApplicationClient.WebhookSecret` persistido em texto claro | Coluna `application_clients.webhook_secret` sem criptografia; contrasta com credenciais de provider | Slice 6-C + ADR-0007 |

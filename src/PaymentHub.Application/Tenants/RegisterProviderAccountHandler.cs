@@ -10,34 +10,39 @@ namespace PaymentHub.Application.Tenants;
 
 public interface IRegisterProviderAccountHandler
 {
-    Task<ProviderAccountResponseDto> HandleAsync(RegisterProviderAccountRequestDto request, CancellationToken cancellationToken);
+    Task<ProviderAccountResponseDto> HandleAsync(
+        Guid tenantId,
+        Guid applicationId,
+        RegisterProviderAccountRequestDto request,
+        CancellationToken cancellationToken);
 }
 
 public sealed class RegisterProviderAccountHandler : IRegisterProviderAccountHandler
 {
     private readonly IProviderAccountRepository _accounts;
-    private readonly IApplicationClientRepository _apps;
     private readonly ICredentialProtector _protector;
     private readonly IUnitOfWork _uow;
 
     public RegisterProviderAccountHandler(
         IProviderAccountRepository accounts,
-        IApplicationClientRepository apps,
         ICredentialProtector protector,
         IUnitOfWork uow)
     {
         _accounts = accounts;
-        _apps = apps;
         _protector = protector;
         _uow = uow;
     }
 
     public async Task<ProviderAccountResponseDto> HandleAsync(
+        Guid tenantId,
+        Guid applicationId,
         RegisterProviderAccountRequestDto request,
         CancellationToken cancellationToken)
     {
-        if (!await _apps.ExistsAsync(request.TenantId, request.ApplicationId, cancellationToken))
-            throw new InvalidOperationException("Tenant or application not found.");
+        if (tenantId == Guid.Empty)
+            throw new InvalidOperationException("Authenticated tenant id is required.");
+        if (applicationId == Guid.Empty)
+            throw new InvalidOperationException("Authenticated application id is required.");
 
         var credentials = JsonSerializer.Serialize(new
         {
@@ -49,8 +54,8 @@ public sealed class RegisterProviderAccountHandler : IRegisterProviderAccountHan
 
         var account = new ProviderAccount(
             Guid.NewGuid(),
-            request.TenantId,
-            request.ApplicationId,
+            tenantId,
+            applicationId,
             request.ProviderCode,
             request.Environment,
             request.Name,
@@ -77,8 +82,6 @@ public sealed class RegisterProviderAccountValidator : AbstractValidator<Registe
 {
     public RegisterProviderAccountValidator()
     {
-        RuleFor(x => x.TenantId).NotEmpty();
-        RuleFor(x => x.ApplicationId).NotEmpty();
         RuleFor(x => x.Name).NotEmpty().MaximumLength(200);
         RuleFor(x => x.ApiKey).NotEmpty().MaximumLength(500);
         RuleFor(x => x.Secret).MaximumLength(2000).When(x => !string.IsNullOrWhiteSpace(x.Secret));

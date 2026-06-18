@@ -4,7 +4,7 @@
 
 O `main` esta majoritariamente aderente ao desenho do MVP: checkout hospedado, multi-tenant por API Key, Postgres com Inbox/Outbox, status canonico, idempotencia de checkout, webhooks de provider persistidos antes do processamento e ausencia de campos de cartao/CVV no dominio principal.
 
-Nao foram identificados achados P0 comprovados nesta auditoria. Os principais riscos restantes sao P1: cadastro de provider account aceitando tenant/application do corpo em vez do contexto autenticado (P1-2), bootstrap/admin endpoints divergentes da documentacao (P1-3), worker de outbox registrado com dispatcher no-op (P1-4) e armazenamento do `webhook_secret` em texto claro (P1-5). O gap P1-1 (enforcement de status ativo de tenant/application) foi resolvido pelo Slice 6-A em 2026-06-17.
+Nao foram identificados achados P0 comprovados nesta auditoria. Os principais riscos restantes sao P1: bootstrap/admin endpoints divergentes da documentacao (P1-3), worker de outbox registrado com dispatcher no-op (P1-4) e armazenamento do `webhook_secret` em texto claro (P1-5). O gap P1-1 (enforcement de status ativo de tenant/application) foi resolvido pelo Slice 6-A em 2026-06-17. O gap P1-2 (cadastro de provider account aceitando tenant/application do corpo em vez do contexto autenticado) foi resolvido pelo Slice 6-B em 2026-06-18.
 
 Tambem ha gaps P2 relevantes em testes de integracao, validacao de assinatura de webhooks externos, audit logs de acoes administrativas e constraints relacionais no banco.
 
@@ -36,7 +36,7 @@ O repositorio implementa bem o fluxo essencial do MVP, mas ainda nao deve ser co
 | Área | Spec | Código | Testes | Status | Observações |
 | --- | --- | --- | --- | --- | --- |
 | Escopo MVP | `000-mvp-scope.md`, ADR-0003 | Checkout hospedado, sem cartao/CVV, sem split/wallet/recorrencia | Coberto indiretamente por dominio e busca estatica | ✅ Aderente | Nao ha campos de cartao/CVV nas entidades principais. |
-| Multi-tenancy | `001-multi-tenancy.md` | Tenant/application presentes nas entidades e repositorios; enforcement de status ativo implementado no middleware (Slice 6-A `[RESOLVIDO 2026-06-17]`) | Cobertura unitaria parcial | ⚠️ Parcial | Ha fluxo que aceita tenant/application do body em provider accounts (gap P1-2). |
+| Multi-tenancy | `001-multi-tenancy.md` | Tenant/application presentes nas entidades e repositorios; enforcement de status ativo implementado no middleware (Slice 6-A `[RESOLVIDO 2026-06-17]`); `ProviderAccount` agora deriva tenant/application exclusivamente de `ITenantContext` (Slice 6-B `[RESOLVIDO 2026-06-18]`) | Cobertura unitaria completa | ✅ Aderente | Gap P1-2 encerrado. |
 | API Key | `002-api-authentication.md`, ADR-0004 | Middleware valida Bearer, tenant e application headers contra hash; valida `TenantStatus.Active` e `ApplicationStatus.Active` com 403 para entidades inativas (Slice 6-A `[RESOLVIDO 2026-06-17]`) | Testes unitarios do middleware (11 testes) | ⚠️ Parcial | Endpoints de bootstrap/admin divergem da doc (gap P1-3). |
 | Modelo de dominio | `003-domain-model.md` | Entidades e enums principais implementados | Testes de `Payment`, `WebhookEvent`, `OutboxEvent` e mappers | ✅ Aderente | Status canonico e invariantes centrais existem. |
 | Checkout | `004-checkout-flow.md` | `CreateCheckoutHandler` cria payment, tentativa e idempotencia; bloqueio por tenant/app inativo garantido pelo middleware (Slice 6-A) | Testes unitarios de handler | ⚠️ Parcial | Idempotencia coberta; falta teste API/e2e. |
@@ -63,10 +63,11 @@ Nenhum achado P0 comprovado nesta auditoria.
    - Risco original: tenant suspenso ou application inativa podiam continuar criando checkouts se a API Key permanecesse ativa.
    - Ver `docs/audits/slice-6a-active-status-enforcement-report-2026-06-17.md` para detalhes do slice.
 
-2. `RegisterProviderAccountHandler` usa tenant/application do corpo, nao do contexto autenticado.
+2. ~~`RegisterProviderAccountHandler` usa tenant/application do corpo, nao do contexto autenticado.~~ `[RESOLVIDO 2026-06-18 pelo Slice 6-B]`
    - Specs: `001-multi-tenancy.md`, `002-api-authentication.md`, `011-security-and-compliance.md`.
-   - Evidencia: `ProviderAccountsController` encaminha o request body ao handler; o handler valida apenas se a application informada existe.
-   - Risco: uma chamada autenticada para uma application pode tentar registrar provider account em outro escopo conhecido.
+   - Evidencia original: `ProviderAccountsController` encaminhava o request body ao handler; o handler validava apenas se a application informada existia.
+   - Risco original: uma chamada autenticada para uma application poderia tentar registrar provider account em outro escopo conhecido.
+   - Correcao: `RegisterProviderAccountRequestDto` nao aceita mais `tenantId`/`applicationId`; o controller deriva ambos de `ITenantContext` resolvido pelo middleware; o handler falha com `InvalidOperationException` quando o contexto retorna `Guid.Empty` e nenhum `ProviderAccount` e persistido. Ver `docs/audits/slice-6b-provider-account-authenticated-context-report-2026-06-18.md` para detalhes.
 
 3. Endpoints de criacao de tenant/application divergem entre spec e middleware.
    - Specs: `009-api-contract.md` e ADR-0004.
@@ -117,6 +118,7 @@ Nenhum achado P0 comprovado nesta auditoria.
 ## Gaps entre specs e código
 
 - ~~Specs esperam bloqueio por tenant/application inativo; codigo verifica existencia e API Key, mas nao status ativo.~~ `[RESOLVIDO 2026-06-17 — Slice 6-A: middleware agora consulta Tenant.Status e ApplicationClient.Status e retorna 403 para entidades inativas]`
+- ~~Specs esperam que endpoints autenticados derivem tenant/application do contexto, nao do body.~~ `[RESOLVIDO 2026-06-18 — Slice 6-B: ProviderAccount e criado exclusivamente a partir de ITenantContext; body do POST /api/v1/provider-accounts nao aceita mais tenantId/applicationId]`
 - Specs tratam endpoints de tenant/application como anonimo/admin futuro; codigo exige API Key por middleware para estes caminhos.
 - Specs de webhooks externos mencionam validacao de assinatura quando suportada; codigo ainda nao implementa validacao nos adapters reais.
 - Specs de auditoria esperam registro de acoes sensiveis; codigo possui infraestrutura, mas nao grava eventos administrativos.
@@ -134,7 +136,7 @@ Nenhum achado P0 comprovado nesta auditoria.
 - Faltam testes de integracao para migrations, indices unicos e constraints.
 - Faltam testes API/e2e para checkout autenticado, replay de idempotency key, conflito de idempotencia, tenant/app inativo e provider indisponivel.
 - Faltam testes de worker para `WebhookProcessorWorker` e `OutboxDispatcherWorker` com banco real ou fixture de integracao.
-- Faltam testes de autorizacao para impedir body tenant/application divergente do contexto autenticado.
+- ~~Faltam testes de autorizacao para impedir body tenant/application divergente do contexto autenticado.~~ `[RESOLVIDO 2026-06-18 — Slice 6-B: 15 testes unitarios cobrindo derivacao, body ignorado, contexto ausente, resposta sem credentials e regressao]`
 - Faltam testes de audit log para acoes administrativas.
 - Faltam testes de assinatura invalida/ausente para webhooks de providers reais quando estes adapters forem ativados.
 
@@ -142,7 +144,7 @@ Nenhum achado P0 comprovado nesta auditoria.
 
 - `webhook_secret` de application fica persistido sem protecao em repouso equivalente a provider credentials.
 - Provider webhook signatures ainda nao sao validadas nos adapters reais.
-- Cadastro de provider account nao vincula explicitamente o tenant/application do request ao contexto autenticado.
+- ~~Cadastro de provider account nao vincula explicitamente o tenant/application do request ao contexto autenticado.~~ `[RESOLVIDO 2026-06-18 — Slice 6-B]`
 - ~~Status de tenant/application nao e enforceado em autenticacao/checkout.~~ `[RESOLVIDO 2026-06-17 — Slice 6-A]`
 - Bootstrap/admin endpoints precisam de politica explicita para evitar tanto deadlock operacional quanto exposicao indevida.
 

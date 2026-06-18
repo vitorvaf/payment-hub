@@ -24,6 +24,9 @@ Definir autorizacao server-to-server por API Key e isolamento por `tenant_id` e 
 - API Key em claro so pode ser exibida uma vez no cadastro.
 - Banco deve armazenar apenas hash e prefixo auditavel da API Key.
 - Caminhos anonimos aceitos: health, swagger, raiz, favicon e webhooks externos.
+- Endpoints autenticados de mutacao (`POST /api/v1/provider-accounts`, `POST /api/v1/checkouts`, `GET /api/v1/payments`, etc.) devem derivar `tenant_id` e `application_id` exclusivamente de `ITenantContext`, populado pelo middleware apos validar API Key, escopo e status ativo.
+- `tenant_id` e `application_id` enviados no body/headers por um cliente autenticado nunca devem sobrescrever o contexto autenticado.
+- Respostas de endpoints autenticados nao podem incluir credenciais, segredos ou material criptografado.
 
 ## Contratos
 
@@ -47,6 +50,8 @@ Erros:
 - Middleware valida hash da chave sem logar a chave apresentada.
 - `HttpContext.Items` ou contexto equivalente carrega tenant, application e api key id.
 - Handlers nao aceitam operacao fora do tenant/application autenticado.
+- Requests autenticados com `tenant_id`/`application_id` no body que divergem do contexto nao afetam a operacao.
+- `ITenantContext` ausente (tenant/application nao resolvidos) faz o endpoint retornar 401 sem persistir dados.
 
 ## Testes esperados
 
@@ -54,9 +59,14 @@ Erros:
 - API Key invalida, vazia, revogada e de outro escopo.
 - Headers ausentes ou GUIDs invalidos.
 - Tenant/application inativo nos fluxos de criacao.
+- Endpoints autenticados ignoram valores divergentes de `tenant_id`/`application_id` no body.
+- Resposta de `POST /api/v1/provider-accounts` nao inclui `api_key`, `secret` ou material criptografado.
 
 ## Arquivos relacionados
 
 - `src/PaymentHub.Api/Auth/ApiKeyAuthenticationMiddleware.cs`
+- `src/PaymentHub.Api/Controllers/ProviderAccountsController.cs`
+- `src/PaymentHub.Application/Tenants/RegisterProviderAccountHandler.cs`
+- `src/PaymentHub.Application/Abstractions/Context/ITenantContext.cs`
 - `src/PaymentHub.Domain/Entities/ApiKey.cs`
 - `src/PaymentHub.Infrastructure.Postgres/Security/`

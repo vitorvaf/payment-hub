@@ -68,13 +68,14 @@ X-Application-Id: <application_id>
 ### `POST /api/v1/provider-accounts`
 
 - Status: atual.
-- Objetivo: cadastrar conta ativa de provider para tenant/application.
+- Objetivo: cadastrar conta ativa de provider para o tenant/application autenticado.
 - Autenticacao: API Key; admin futuro.
+- Tenant e application: derivados exclusivamente do contexto autenticado (`ITenantContext`). O body **nao** aceita `tenantId`/`applicationId`. Valores divergentes enviados no body sao ignorados por design (campos removidos do DTO). Esta restricao existe para impedir cross-tenant/cross-application registration por uma application autenticada.
 - Request: provider, ambiente, nome, credenciais e flag default.
 - Response: provider account sem segredo em claro.
-- Erros: `400` para payload invalido; `401` para API Key invalida.
+- Erros: `400` para payload invalido; `401` para API Key invalida ou contexto autenticado ausente; `403` para tenant/application inativo (retornado pelo middleware).
 - Tabelas afetadas: `provider_accounts`; `audit_logs` futuro.
-- Specs relacionadas: `008-provider-adapters.md`, `011-security-and-compliance.md`.
+- Specs relacionadas: `002-multitenancy-and-authentication.md`, `008-provider-adapters.md`, `011-security-and-compliance.md`.
 
 ### `POST /api/v1/checkouts`
 

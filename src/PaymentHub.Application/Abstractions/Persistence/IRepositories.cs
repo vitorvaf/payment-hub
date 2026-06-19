@@ -12,6 +12,7 @@ public interface ITenantRepository
 {
     Task AddAsync(Tenant tenant, CancellationToken cancellationToken);
     Task<Tenant?> GetByIdAsync(Guid id, CancellationToken cancellationToken);
+    Task<Tenant?> GetBySlugAsync(string slug, CancellationToken cancellationToken);
     Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken);
 }
 
@@ -20,6 +21,7 @@ public interface IApplicationClientRepository
     Task AddAsync(ApplicationClient client, CancellationToken cancellationToken);
     Task<ApplicationClient?> GetByIdAsync(Guid id, CancellationToken cancellationToken);
     Task<ApplicationClient?> GetByTenantAndIdAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
+    Task<ApplicationClient?> GetByTenantAndNameAsync(Guid tenantId, string name, CancellationToken cancellationToken);
     Task<bool> ExistsAsync(Guid tenantId, Guid id, CancellationToken cancellationToken);
 }
 

@@ -18,6 +18,8 @@ Status possivel: `NOT_STARTED` | `DISCOVERY` | `SPEC_DRAFTED` | `SPEC_REVIEW_REQ
 
 > **Slice 6-B (2026-06-18):** gap P1-2 (`RegisterProviderAccountHandler` usava `tenantId`/`applicationId` do body em vez do contexto autenticado) foi resolvido. `ProviderAccount` agora e criado exclusivamente a partir de `ITenantContext` resolvido pelo middleware. Body do `POST /api/v1/provider-accounts` nao aceita mais `tenantId`/`applicationId`. Restam 2 gaps P1 proprios da Phase 6: P1-3 (politica de bootstrap) e P1-5 (`WebhookSecret` em texto claro).
 
+> **Slice 6-D (2026-06-18):** gap P1-3 (politica de bootstrap/admin seed) foi resolvido. `IBootstrapPolicy` + `BootstrapOptions` + `IDevelopmentDataSeeder` formalizam a politica: `Production` nao cria nada automaticamente (sem opt-in explicito `AllowProductionBootstrap=true`); `Development`/`Test` podem rodar seed idempotente de tenant+application apenas com `Bootstrap:Enabled=true` e `Bootstrap:SeedDevelopmentData=true`; logs nao registram API Key, secrets ou credenciais. Restam 1 gap P1 proprio da Phase 6: P1-5 (`WebhookSecret` em texto claro). Phase 6 segue `IMPLEMENTING` ate P1-5 ser resolvido.
+
 > **Regra para o agente:** `IMPLEMENTED` nao equivale a `VALIDATED`. Uma phase marcada como `IMPLEMENTED` pode ainda ter gaps que a impedem de ir para producao. Verificar sempre a secao "Gaps conhecidos" da phase e os registros em `docs/audits/spec-adherence-audit-2026-06-17.md` antes de tratar a phase como finalizada.
 
 ---
@@ -83,9 +85,9 @@ Phase 0 esta completa. Existe gap de documentacao P3: `docs/architecture/overvie
 >
 > - ~~**P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados (`ApiKeyAuthenticationMiddleware`).~~ `[RESOLVIDO 2026-06-17 — Slice 6-A]`
 > - ~~**P1-2** — `RegisterProviderAccountHandler` usa tenant/application do corpo da requisicao, nao do contexto autenticado.~~ `[RESOLVIDO 2026-06-18 — Slice 6-B]`
-> - **P1-3** — Endpoints de criacao de tenant/application nao tem politica de autenticacao definida (deadlock de bootstrap).
+> - **P1-3** — Endpoints de criacao de tenant/application nao tem politica de autenticacao definida (deadlock de bootstrap). `[RESOLVIDO 2026-06-18 — Slice 6-D: IBootstrapPolicy + BootstrapOptions + DevelopmentDataSeeder]`
 >
-> P1-1 foi resolvido pelo Slice 6-A (enforcement de `TenantStatus.Active` e `ApplicationStatus.Active` no middleware). P1-2 foi resolvido pelo Slice 6-B (`ProviderAccount` agora e criado a partir de `ITenantContext`; body nao aceita mais `tenantId`/`applicationId`). P1-3 sera resolvido pelo Slice 6-D de Phase 6. Phase 1 nao deve ser considerada `VALIDATED` enquanto P1-3 estiver aberto. Ver `docs/audits/spec-adherence-audit-2026-06-17.md` para detalhes.
+> P1-1 foi resolvido pelo Slice 6-A (enforcement de `TenantStatus.Active` e `ApplicationStatus.Active` no middleware). P1-2 foi resolvido pelo Slice 6-B (`ProviderAccount` agora e criado a partir de `ITenantContext`; body nao aceita mais `tenantId`/`applicationId`). P1-3 foi resolvido pelo Slice 6-D (`IBootstrapPolicy` + `BootstrapOptions` + `IDevelopmentDataSeeder` em `docs/audits/slice-6d-bootstrap-admin-seed-policy-report-2026-06-18.md`). Phase 1 ainda tem gap de administracao humana (primeira API Key ainda depende de canal externo); slices futuros (painel admin Phase 5) vao fechar esse caminho.
 
 ### Objetivo
 
@@ -339,7 +341,7 @@ Esta phase e responsavel por 4 dos 5 gaps P1 da auditoria de 2026-06-17:
 
 - **P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados → Slice 6-A. `[RESOLVIDO 2026-06-17]`
 - **P1-2** — `RegisterProviderAccountHandler` usa tenant/application do body → Slice 6-B. `[RESOLVIDO 2026-06-18]`
-- **P1-3** — Endpoints de bootstrap/admin sem politica de autenticacao → Slice 6-D + ADR-0006.
+- **P1-3** — Endpoints de bootstrap/admin sem politica de autenticacao → Slice 6-D + ADR-0006. `[RESOLVIDO 2026-06-18 — Slice 6-D: IBootstrapPolicy + BootstrapOptions + DevelopmentDataSeeder]`
 - **P1-5** — `ApplicationClient.WebhookSecret` persistido em texto claro → Slice 6-C + ADR-0007.
 
 O gap P1-4 (`NoopApplicationWebhookDispatcher`) e de responsabilidade da Phase 7 (Slice 7-A), nao desta phase. No entanto, o Slice 6-C (protecao de `WebhookSecret`) e prerequisito para que o Slice 7-A possa ser validado de forma segura, pois o dispatcher HTTP usara o secret para assinar os webhooks internos.

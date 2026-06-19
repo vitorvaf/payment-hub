@@ -81,7 +81,7 @@ Com base no estado atual (`IMPLEMENTING` em Phases 2, 3, 6, 7) e nos achados P1 
 2. **Slice 7-A**: Substituir `NoopApplicationWebhookDispatcher` por dispatcher HTTP real no Worker host.
 3. **Slice 6-B**: Corrigir `RegisterProviderAccountHandler` para derivar tenant/application do `ITenantContext`. `[CONCLUIDO 2026-06-18]`
 4. **Slice 6-C**: Proteger `ApplicationClient.WebhookSecret` em repouso.
-5. **Slice 6-D**: Gravar `AuditLog` em acoes administrativas.
+5. **Slice 6-D**: Politica de bootstrap/admin seed. `[CONCLUIDO 2026-06-18]`
 6. **Slice 1-IT**: Criar primeira fixture de integracao com Postgres (migrations + indices).
 7. **Slice 2-A**: Implementar adapter AbacatePay funcional com validacao de assinatura de webhook.
 

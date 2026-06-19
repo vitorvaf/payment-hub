@@ -12,7 +12,7 @@ Data de referencia: 2026-06-17
 | 3 | Webhooks Externos e Internos | `IMPLEMENTING` | 0 proprios² | 1 (assinatura provider) | Slice 7-A (dispatcher real) |
 | 4 | Multi-Provider | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 2 + Phase 6 |
 | 5 | Painel Admin | `NOT_STARTED` | 0 | 0 | Aguarda Phase 6 |
-| 6 | Seguranca e Confiabilidade | `IMPLEMENTING` | 2 (P1-3, P1-5) | 1 (audit log P2-3) | Slice 6-C (proteger webhook_secret) |
+| 6 | Seguranca e Confiabilidade | `IMPLEMENTING` | 1 (P1-5) | 1 (audit log P2-3) | Slice 6-C (proteger webhook_secret) |
 | 7 | Workers e Outbox | `IMPLEMENTING` | 1 (P1-4 noop dispatcher) | 1 (testes integracao) | Slice 7-A |
 | 8 | Conciliacao Financeira | `NOT_STARTED` | 0 | 0 | Aguarda Phase 4 + 7 |
 | 9 | Relatorios e Observabilidade | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 6 + 7 |
@@ -25,6 +25,8 @@ Notas:
 > **Slice 6-A (2026-06-17):** gap P1-1 (Tenant/application inativos nao bloqueiam fluxos autenticados) foi resolvido pelo `ApiKeyAuthenticationMiddleware`, que agora consulta `Tenant.Status` e `ApplicationClient.Status` apos validar a API Key.
 
 > **Slice 6-B (2026-06-18):** gap P1-2 (`RegisterProviderAccountHandler` usava `tenantId`/`applicationId` do body) foi resolvido. `ProviderAccount` agora e criado exclusivamente a partir de `ITenantContext`. Body do `POST /api/v1/provider-accounts` nao aceita mais `tenantId`/`applicationId`. Restam 2 gaps P1 da Phase 6: P1-3 (politica de bootstrap) e P1-5 (`WebhookSecret` em texto claro).
+
+> **Slice 6-D (2026-06-18):** gap P1-3 (politica de bootstrap/admin seed) foi resolvido. `IBootstrapPolicy` + `BootstrapOptions` + `IDevelopmentDataSeeder` formalizam a politica: `Production` nao cria nada automaticamente a menos que `AllowProductionBootstrap=true` (opt-in explicito); `Development`/`Test` podem rodar seed idempotente de tenant+application apenas com `Bootstrap:Enabled=true` e `Bootstrap:SeedDevelopmentData=true`; logs nao registram API Key, secrets ou credenciais. Restam 1 gap P1 proprio da Phase 6: P1-5 (`WebhookSecret` em texto claro).
 
 ² Phase 3 originou o gap P1-4 (`NoopApplicationWebhookDispatcher`), mas a correc¸ao e escopo da Phase 7. A coluna "Gaps P1 proprios" reflete gaps cuja correcao e responsabilidade desta phase, nao onde o sintoma aparece.
 
@@ -52,7 +54,7 @@ Fonte: `docs/audits/spec-adherence-audit-2026-06-17.md`
 |---|-----|--------------|---------------|
 | P1-1 | Tenant/application inativos nao bloqueiam fluxos autenticados | Phase 1, 6 | Slice 6-A `[RESOLVIDO 2026-06-17]` |
 | P1-2 | `RegisterProviderAccountHandler` usa tenant/application do body, nao do contexto autenticado | Phase 1, 6 | Slice 6-B `[RESOLVIDO 2026-06-18]` |
-| P1-3 | Endpoints de tenant/application divergem entre spec e middleware quanto a autenticacao | Phase 1, 6 | Slice 6-D (bootstrap policy) |
+| P1-3 | Endpoints de tenant/application divergem entre spec e middleware quanto a autenticacao | Phase 1, 6 | Slice 6-D (bootstrap policy) `[RESOLVIDO 2026-06-18]` |
 | P1-4 | Worker dedicado de outbox usa `NoopApplicationWebhookDispatcher` | Phase 3, 7 | Slice 7-A |
 | P1-5 | `ApplicationClient.WebhookSecret` persistido em texto claro | Phase 6 | Slice 6-C |
 
@@ -79,7 +81,7 @@ Slice 6-A  Enforcement de TenantStatus.Active + ApplicationStatus.Active   [CONC
 Slice 7-A  Substituir NoopApplicationWebhookDispatcher por HTTP real
 Slice 6-B  RegisterProviderAccountHandler via ITenantContext                [CONCLUIDO 2026-06-18]
 Slice 6-C  Protecao de ApplicationClient.WebhookSecret em repouso
-Slice 6-D  Politica de bootstrap/admin + AuditLog em handlers administrativos
+Slice 6-D  Politica de bootstrap/admin + AuditLog em handlers administrativos  [CONCLUIDO 2026-06-18 — politica de bootstrap]
 ```
 
 ### Bloco B — Testes de Integracao (Phase 1 + 3 + 7)
@@ -107,10 +109,10 @@ Slice 2-T  Testes do adapter e documentacao
 
 | Indicador | Valor atual | Meta |
 |-----------|------------|------|
-| Testes unitarios passando | 85 | >= 64 |
+| Testes unitarios passando | 106 | >= 64 |
 | Testes de integracao | 0 | >= 5 |
 | Gaps P0 abertos | 0 | 0 |
-| Gaps P1 abertos | 3 (P1-3, P1-4, P1-5) | 0 |
+| Gaps P1 abertos | 2 (P1-4, P1-5) | 0 |
 | Gaps P2 abertos | 5 | <= 2 |
 | Build status | Limpo | Limpo |
 | Providers reais funcionais | 0 (Fake ok) | >= 1 (AbacatePay) |

@@ -79,7 +79,22 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | 6 | 6-B | Unit | Caminho feliz continua funcionando | Teste passa | Passou | `PASS` | 2026-06-18 |
 | 6 | 6-B | Unit | `ApiKeyAuthenticationMiddleware` continua passando 11 testes (sem regressao) | Teste passa | 11 testes passando | `PASS` | 2026-06-18 |
 | 6 | 6-C | Unit | WebhookSecret criptografado no banco | Nao visievel em texto claro | `PENDING` | `PENDING` | — |
-| 6 | 6-D | Unit | AuditLog gravado em acao admin | Log presente no banco | `PENDING` | `PENDING` | — |
+| 6 | 6-D | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `dotnet test --filter "FullyQualifiedName~Bootstrap"` | Todos passando | 15 testes passando | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `dotnet test PaymentHub.slnx` | >= 106 testes passando | 106 testes passando | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `HostBootstrapPolicy.ShouldRunDevelopmentSeed` retorna `false` em `Production` mesmo com `Enabled=true` e `SeedDevelopmentData=true` | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `HostBootstrapPolicy.ShouldRunDevelopmentSeed` retorna `false` em `Production` sem `AllowProductionBootstrap=true` | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `HostBootstrapPolicy.ShouldRunDevelopmentSeed` retorna `true` em `Production` apenas com opt-in explicito | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `HostBootstrapPolicy.ShouldRunDevelopmentSeed` retorna `true` em `Development`/`Test` quando habilitado | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `HostBootstrapPolicy.ShouldRunDevelopmentSeed` retorna `false` quando `Bootstrap:Enabled=false` | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | Configuracao ausente produz politica segura | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `DevelopmentDataSeeder` nao executa em `Production` sem opt-in | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `DevelopmentDataSeeder` e idempotente (segunda execucao nao duplica) | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `DevelopmentDataSeeder` cria tenant/application com `Status=Active` | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `DevelopmentDataSeeder` nao loga API Key, secrets, senhas, tokens ou `Bearer` | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `DevelopmentDataSeeder` falha com seguranca quando configuracao esta incompleta | Teste passa | Passou | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `ApiKeyAuthenticationMiddleware` continua passando 11 testes (sem regressao) | Teste passa | 11 testes passando | `PASS` | 2026-06-18 |
+| 6 | 6-D | Unit | `ProviderAccount` continua passando 15 testes (sem regressao) | Teste passa | 15 testes passando | `PASS` | 2026-06-18 |
 | 6 | 6-D | Manual | Criar tenant via API sem API Key previa | Retorno esperado sem deadlock operacional | `PENDING` | `PENDING` | — |
 
 ---

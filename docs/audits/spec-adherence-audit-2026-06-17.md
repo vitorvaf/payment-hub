@@ -37,7 +37,7 @@ O repositorio implementa bem o fluxo essencial do MVP, mas ainda nao deve ser co
 | --- | --- | --- | --- | --- | --- |
 | Escopo MVP | `000-mvp-scope.md`, ADR-0003 | Checkout hospedado, sem cartao/CVV, sem split/wallet/recorrencia | Coberto indiretamente por dominio e busca estatica | ✅ Aderente | Nao ha campos de cartao/CVV nas entidades principais. |
 | Multi-tenancy | `001-multi-tenancy.md` | Tenant/application presentes nas entidades e repositorios; enforcement de status ativo implementado no middleware (Slice 6-A `[RESOLVIDO 2026-06-17]`); `ProviderAccount` agora deriva tenant/application exclusivamente de `ITenantContext` (Slice 6-B `[RESOLVIDO 2026-06-18]`) | Cobertura unitaria completa | ✅ Aderente | Gap P1-2 encerrado. |
-| API Key | `002-api-authentication.md`, ADR-0004 | Middleware valida Bearer, tenant e application headers contra hash; valida `TenantStatus.Active` e `ApplicationStatus.Active` com 403 para entidades inativas (Slice 6-A `[RESOLVIDO 2026-06-17]`) | Testes unitarios do middleware (11 testes) | ⚠️ Parcial | Endpoints de bootstrap/admin divergem da doc (gap P1-3). |
+| API Key | `002-api-authentication.md`, ADR-0004 | Middleware valida Bearer, tenant e application headers contra hash; valida `TenantStatus.Active` e `ApplicationStatus.Active` com 403 para entidades inativas (Slice 6-A `[RESOLVIDO 2026-06-17]`); politica de bootstrap documentada em `002` e `011` (Slice 6-D `[RESOLVIDO 2026-06-18]`) | Testes unitarios do middleware (11 testes) + testes de `IBootstrapPolicy`/`IDevelopmentDataSeeder` (21 testes) | ✅ Aderente | P1-3 encerrado. |
 | Modelo de dominio | `003-domain-model.md` | Entidades e enums principais implementados | Testes de `Payment`, `WebhookEvent`, `OutboxEvent` e mappers | ✅ Aderente | Status canonico e invariantes centrais existem. |
 | Checkout | `004-checkout-flow.md` | `CreateCheckoutHandler` cria payment, tentativa e idempotencia; bloqueio por tenant/app inativo garantido pelo middleware (Slice 6-A) | Testes unitarios de handler | ⚠️ Parcial | Idempotencia coberta; falta teste API/e2e. |
 | Providers | `006-provider-integration.md`, ADR-0005 | Router e adapters fake/Stripe/MercadoPago/AbacatePay skeleton | Testes do fake e mapper | ⚠️ Parcial | Credenciais sao criptografadas, mas providers reais ainda sao skeleton e assinatura externa nao e validada. |
@@ -69,10 +69,11 @@ Nenhum achado P0 comprovado nesta auditoria.
    - Risco original: uma chamada autenticada para uma application poderia tentar registrar provider account em outro escopo conhecido.
    - Correcao: `RegisterProviderAccountRequestDto` nao aceita mais `tenantId`/`applicationId`; o controller deriva ambos de `ITenantContext` resolvido pelo middleware; o handler falha com `InvalidOperationException` quando o contexto retorna `Guid.Empty` e nenhum `ProviderAccount` e persistido. Ver `docs/audits/slice-6b-provider-account-authenticated-context-report-2026-06-18.md` para detalhes.
 
-3. Endpoints de criacao de tenant/application divergem entre spec e middleware.
-   - Specs: `009-api-contract.md` e ADR-0004.
-   - Evidencia: a documentacao trata `POST /api/v1/tenants` e `POST /api/v1/applications` como anonimo/admin futuro, mas o middleware exige API Key para caminhos nao anonimos.
-   - Risco: bootstrap operacional inconsistente; a primeira criacao via API fica sem caminho claro.
+3. ~~Endpoints de criacao de tenant/application divergem entre spec e middleware.~~ `[RESOLVIDO 2026-06-18 pelo Slice 6-D]`
+   - Specs: `009-api-contract.md`, `002-multitenancy-and-authentication.md`, `011-security-and-compliance.md`.
+   - Evidencia original: a documentacao trata `POST /api/v1/tenants` e `POST /api/v1/applications` como anonimo/admin futuro, mas o middleware exige API Key para caminhos nao anonimos.
+   - Risco original: bootstrap operacional inconsistente; a primeira criacao via API fica sem caminho claro.
+   - Correcao: `IBootstrapPolicy` + `BootstrapOptions` + `IDevelopmentDataSeeder` formalizam a politica. `Production` nao cria nada sem opt-in explicito (`Bootstrap:AllowProductionBootstrap=true`); `Development`/`Test` rodam seed idempotente de tenant+application apenas com `Bootstrap:Enabled=true` e `Bootstrap:SeedDevelopmentData=true`. Logs nao registram API Key, secrets ou credenciais. Ver `docs/audits/slice-6d-bootstrap-admin-seed-policy-report-2026-06-18.md` para detalhes do slice.
 
 4. Worker dedicado de outbox usa dispatcher no-op.
    - Specs: `007-webhook-processing.md`, `010-database-contract.md`, `012-observability-and-audit.md`.
@@ -119,7 +120,7 @@ Nenhum achado P0 comprovado nesta auditoria.
 
 - ~~Specs esperam bloqueio por tenant/application inativo; codigo verifica existencia e API Key, mas nao status ativo.~~ `[RESOLVIDO 2026-06-17 — Slice 6-A: middleware agora consulta Tenant.Status e ApplicationClient.Status e retorna 403 para entidades inativas]`
 - ~~Specs esperam que endpoints autenticados derivem tenant/application do contexto, nao do body.~~ `[RESOLVIDO 2026-06-18 — Slice 6-B: ProviderAccount e criado exclusivamente a partir de ITenantContext; body do POST /api/v1/provider-accounts nao aceita mais tenantId/applicationId]`
-- Specs tratam endpoints de tenant/application como anonimo/admin futuro; codigo exige API Key por middleware para estes caminhos.
+- ~~Specs tratam endpoints de tenant/application como anonimo/admin futuro; codigo exige API Key por middleware para estes caminhos.~~ `[RESOLVIDO 2026-06-18 — Slice 6-D: IBootstrapPolicy + BootstrapOptions + DevelopmentDataSeeder; politica de bootstrap documentada em 002 e 011]`
 - Specs de webhooks externos mencionam validacao de assinatura quando suportada; codigo ainda nao implementa validacao nos adapters reais.
 - Specs de auditoria esperam registro de acoes sensiveis; codigo possui infraestrutura, mas nao grava eventos administrativos.
 - Specs/arquitetura esperam entrega de webhooks internos; worker dedicado atual pode marcar como enviado usando dispatcher no-op.
@@ -146,7 +147,7 @@ Nenhum achado P0 comprovado nesta auditoria.
 - Provider webhook signatures ainda nao sao validadas nos adapters reais.
 - ~~Cadastro de provider account nao vincula explicitamente o tenant/application do request ao contexto autenticado.~~ `[RESOLVIDO 2026-06-18 — Slice 6-B]`
 - ~~Status de tenant/application nao e enforceado em autenticacao/checkout.~~ `[RESOLVIDO 2026-06-17 — Slice 6-A]`
-- Bootstrap/admin endpoints precisam de politica explicita para evitar tanto deadlock operacional quanto exposicao indevida.
+- ~~Bootstrap/admin endpoints precisam de politica explicita para evitar tanto deadlock operacional quanto exposicao indevida.~~ `[RESOLVIDO 2026-06-18 — Slice 6-D: IBootstrapPolicy + BootstrapOptions + DevelopmentDataSeeder]`
 
 ## Gaps de documentação
 

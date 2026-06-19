@@ -3,9 +3,11 @@ using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using PaymentHub.Api.Auth;
 using PaymentHub.Api.Webhooks;
+using PaymentHub.Application.Abstractions.Bootstrap;
 using PaymentHub.Application.Abstractions.Context;
 using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Providers;
+using PaymentHub.Application.Bootstrap;
 using PaymentHub.Application.Checkouts;
 using PaymentHub.Application.Orchestration;
 using PaymentHub.Application.Payments;
@@ -65,6 +67,9 @@ builder.Services.AddPaymentHubProviders(builder.Configuration);
 
 builder.Services.AddScoped<ITenantContext, HttpTenantContext>();
 builder.Services.AddSingleton<IRuntimeEnvironment, HostRuntimeEnvironment>();
+builder.Services.AddSingleton<IBootstrapPolicy, HostBootstrapPolicy>();
+builder.Services.Configure<BootstrapOptions>(builder.Configuration.GetSection(BootstrapOptions.SectionName));
+builder.Services.AddScoped<IDevelopmentDataSeeder, DevelopmentDataSeeder>();
 builder.Services.AddScoped<IApplicationWebhookDispatcher, HttpApplicationWebhookDispatcher>();
 
 builder.Services.AddScoped<IRegisterTenantHandler, RegisterTenantHandler>();
@@ -82,6 +87,12 @@ builder.Services.AddValidatorsFromAssemblyContaining<RegisterTenantValidator>();
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();
+
+{
+    using var scope = app.Services.CreateScope();
+    var seeder = scope.ServiceProvider.GetRequiredService<IDevelopmentDataSeeder>();
+    _ = await seeder.SeedAsync(CancellationToken.None);
+}
 
 if (app.Environment.IsDevelopment())
 {

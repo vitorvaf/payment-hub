@@ -209,7 +209,7 @@ Os principais gaps sao: dispatcher HTTP real ausente no worker de Outbox (P1-4),
 | -- | --------- | ------------------- | -------------- |
 | ~~P1-1~~ | Tenant/application inativos nao bloqueiam fluxos autenticados | `ApiKeyAuthenticationMiddleware` agora consulta `Tenant.Status` e `ApplicationClient.Status`; 403 para entidades inativas | Slice 6-A `[RESOLVIDO 2026-06-17]` |
 | P1-2 | `RegisterProviderAccountHandler` usa tenant/application do body, nao do contexto | `ProviderAccountsController` agora deriva `tenantId`/`applicationId` de `ITenantContext`; body nao aceita mais esses campos | Slice 6-B `[RESOLVIDO 2026-06-18]` |
-| P1-3 | Endpoints de bootstrap/admin sem politica explicita de autenticacao | `TenantsController` e `ApplicationsController` sem mecanismo claro para primeiro uso | Slice 6-D + ADR-0006 |
+| P1-3 | Endpoints de bootstrap/admin sem politica explicita de autenticacao | `TenantsController` e `ApplicationsController` sem mecanismo claro para primeiro uso | Slice 6-D + ADR-0006 `[RESOLVIDO 2026-06-18 — IBootstrapPolicy + BootstrapOptions + DevelopmentDataSeeder]` |
 | P1-4 | Worker de Outbox usa `NoopApplicationWebhookDispatcher` | `PaymentHub.Worker/Program.cs` registra `Noop`; `HttpApplicationWebhookDispatcher` nao esta no host worker | Slice 7-A |
 | P1-5 | `ApplicationClient.WebhookSecret` persistido em texto claro | Coluna `application_clients.webhook_secret` sem criptografia; contrasta com credenciais de provider | Slice 6-C + ADR-0007 |
 

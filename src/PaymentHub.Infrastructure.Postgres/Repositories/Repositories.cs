@@ -23,6 +23,9 @@ public class TenantRepository : ITenantRepository
     public Task<Tenant?> GetByIdAsync(Guid id, CancellationToken cancellationToken)
         => _db.Tenants.FirstOrDefaultAsync(t => t.Id == id, cancellationToken);
 
+    public Task<Tenant?> GetBySlugAsync(string slug, CancellationToken cancellationToken)
+        => _db.Tenants.FirstOrDefaultAsync(t => t.Slug == slug, cancellationToken);
+
     public Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken)
         => _db.Tenants.AsNoTracking().AnyAsync(t => t.Id == id, cancellationToken);
 }
@@ -40,6 +43,9 @@ public class ApplicationClientRepository : IApplicationClientRepository
 
     public Task<ApplicationClient?> GetByTenantAndIdAsync(Guid tenantId, Guid id, CancellationToken cancellationToken)
         => _db.ApplicationClients.FirstOrDefaultAsync(a => a.TenantId == tenantId && a.Id == id, cancellationToken);
+
+    public Task<ApplicationClient?> GetByTenantAndNameAsync(Guid tenantId, string name, CancellationToken cancellationToken)
+        => _db.ApplicationClients.FirstOrDefaultAsync(a => a.TenantId == tenantId && a.Name == name, cancellationToken);
 
     public Task<bool> ExistsAsync(Guid tenantId, Guid id, CancellationToken cancellationToken)
         => _db.ApplicationClients.AsNoTracking().AnyAsync(a => a.TenantId == tenantId && a.Id == id, cancellationToken);

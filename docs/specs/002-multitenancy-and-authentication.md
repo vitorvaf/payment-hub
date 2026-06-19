@@ -28,6 +28,19 @@ Definir autorizacao server-to-server por API Key e isolamento por `tenant_id` e 
 - `tenant_id` e `application_id` enviados no body/headers por um cliente autenticado nunca devem sobrescrever o contexto autenticado.
 - Respostas de endpoints autenticados nao podem incluir credenciais, segredos ou material criptografado.
 
+## Politica de bootstrap
+
+A criacao inicial de tenants, applications, API Keys e provider accounts (coletivamente "bootstrap") segue a politica abaixo, implementada em `IBootstrapPolicy` e `IDevelopmentDataSeeder` (ver `docs/audits/slice-6d-bootstrap-admin-seed-policy-report-2026-06-18.md`):
+
+- `Bootstrap:Enabled` deve ser `true` para que qualquer seed automatico seja considerado.
+- `Bootstrap:SeedDevelopmentData` deve ser `true` para que o seeder interno crie `tenant` + `application` de desenvolvimento. Padrao seguro: `false`.
+- `Bootstrap:AllowProductionBootstrap` deve ser `true` para que o seeder rode em `Production`. Padrao seguro: `false`. Sem esse opt-in explicito, `Production` nao cria nada automaticamente mesmo se `Enabled=true`.
+- O seeder nao cria API Keys, provider accounts, segredos ou credenciais. Apenas `tenant` e `application` com status `Active` quando o seed for executado.
+- O seeder e idempotente: consulta `ITenantRepository.GetBySlugAsync` e `IApplicationClientRepository.GetByTenantAndNameAsync` antes de criar. Rodar o seed N vezes nao duplica dados.
+- Logs do seedor podem registrar ids, slugs, ambiente e decisao politica; nunca registram API Key raw, secrets de provider, webhook secrets, tokens, senhas ou connection strings.
+- Em `Production`, a ausencia ou configuracao invalida de `Bootstrap:*` resulta em `ShouldRunDevelopmentSeed=false` e o seeder apenas loga "skipped".
+- Endpoints publicos de criacao de tenant/application (`POST /api/v1/tenants`, `POST /api/v1/applications`) continuam exigindo API Key via middleware; este slice nao introduz bypass de autenticacao. A primeira API Key operacional continua sendo obtida por canal administrativo externo ao MVP.
+
 ## Contratos
 
 ```http

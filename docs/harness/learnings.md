@@ -11,6 +11,20 @@ Este arquivo registra aprendizados técnicos do projeto que devem orientar futur
 - Evidência:
 - Impacto para próximos agentes:
 
+### 2026-06-18 - Bootstrap deve ser policy-driven, opt-in e nunca loggar credenciais
+
+- Contexto: Antes do Slice 6-D, nao havia codigo de seed automatico e nenhuma politica explicita para criacao de tenant/application inicial. O codigo tinha `TenantsController` e `ApplicationsController` que o middleware bloqueava (requeriam API Key), criando um deadlock operacional. A auditoria apontou isso como gap P1-3.
+- Decisão: Centralizar a politica em `IBootstrapPolicy` (Application) + `BootstrapOptions` (strongly-typed) + `HostBootstrapPolicy` (Api, le `IHostEnvironment`); seedor `IDevelopmentDataSeeder` cria apenas `tenant` + `application` (nunca API Key, provider account, secret ou credencial). Defaults de `appsettings.json` sao `Enabled=false`, `SeedDevelopmentData=false`, `AllowProductionBootstrap=false` (fail-safe). `appsettings.Development.json` liga `Enabled=true` e `SeedDevelopmentData=true` mas mantem `AllowProductionBootstrap=false`. Idempotencia via `ITenantRepository.GetBySlugAsync` e `IApplicationClientRepository.GetByTenantAndNameAsync` (novos metodos adicionados no slice). `Production` exige opt-in explicito para criar qualquer dado.
+- Evidência: 12 testes em `tests/PaymentHub.UnitTests/Api/HostBootstrapPolicyTests.cs` e 9 testes em `tests/PaymentHub.UnitTests/Application/DevelopmentDataSeederTests.cs`. Build limpo, 106 testes passando. Relatorio em `docs/audits/slice-6d-bootstrap-admin-seed-policy-report-2026-06-18.md`.
+- Impacto para próximos agentes: Sempre que adicionar um caminho automatico de criacao de dados iniciais (seed, migration data, fixture), passar por `IBootstrapPolicy`. Nao criar API Key, secret ou credencial via seedor — primeiro porque logging seguro e obrigatorio (regra de `docs/harness/security.md`), segundo porque a exibicao one-time de API Key depende do response do endpoint HTTP. Para resolver o deadlock residual de "como obter a primeira API Key em producao", alinhar com o painel admin (Phase 5) ou um canal externo documentado; nao introduzir bypass de `ApiKeyAuthenticationMiddleware`. Ao auditar `appsettings*.json`, conferir que a secao `Bootstrap` tem defaults seguros.
+
+### 2026-06-18 - Em projetos .NET 10 com `Microsoft.NET.Sdk`, `IOptions<>` exige PackageReference explicita
+
+- Contexto: Ao adicionar `IDevelopmentDataSeeder` em `PaymentHub.Application` (que usa `Microsoft.NET.Sdk` puro, nao `Microsoft.NET.Sdk.Web`), a primeira compilacao falhou em `IOptions<BootstrapOptions>` e `ILogger<>` porque o shared framework `Microsoft.AspNetCore.App` nao e transitive em projetos nao-Web. Os projetos `PaymentHub.Infrastructure.Postgres` e `PaymentHub.Api` ja tinham `IOptions<>` indiretamente (via SDK Web + providers) e funcionavam.
+- Decisão: Adicionar `Microsoft.Extensions.Logging.Abstractions` 10.0.0 e `Microsoft.Extensions.Options` 10.0.0 como `PackageReference` no `PaymentHub.Application.csproj`. Manter as versoes alinhadas com a versao do .NET (10.0.x) para evitar conflitos de runtime.
+- Evidência: Build do `PaymentHub.Application` falhou com `error CS0246: The type or namespace name 'IOptions<>' could not be found` ate a adicao dos packages; apos, build limpo.
+- Impacto para próximos agentes: Ao adicionar uma classe Application que dependa de `IOptions<T>`, `ILogger<T>` ou `IHostEnvironment` (apesar deste ultimo exigir Microsoft.Extensions.Hosting), adicionar explicitamente os packages `Microsoft.Extensions.Options` e/ou `Microsoft.Extensions.Logging.Abstractions` no `.csproj` Application. Nao assumir que o shared framework Web cobre. A mesma logica vale para qualquer projeto que use `Microsoft.NET.Sdk` puro (bibliotecas).
+
 ### 2026-06-17 - Enforcement de status ativo deve acontecer no middleware, nao no handler
 
 - Contexto: Gap P1-1 da auditoria de 2026-06-17 apontava que `Tenant`/`ApplicationClient` inativos continuavam consumindo a API quando a API Key estava `Active`. A spec `002-multitenancy-and-authentication.md` exige "Tenant suspenso/desativado ou application inativa deve impedir criacao de checkout".

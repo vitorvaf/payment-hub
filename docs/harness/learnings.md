@@ -11,6 +11,13 @@ Este arquivo registra aprendizados técnicos do projeto que devem orientar futur
 - Evidência:
 - Impacto para próximos agentes:
 
+### 2026-06-23 - Agent-readiness funciona melhor com contexto progressivo e verificacao mecanica
+
+- Contexto: A configuracao de Copilot/Codex precisava cobrir auditoria, instrucoes, prompts, agentes, skills, docs de uso, estado e verificacao sem transformar `copilot-instructions.md` em uma enciclopedia.
+- Decisão: Manter `AGENTS.md` como indice operacional, `.github/copilot-instructions.md` curto, regras especificas em `.github/instructions/`, rotinas em `.github/prompts/` e `.github/skills/`, personas em `.github/agents/`, governanca em `docs/ai/`, estado em `feature_list.md`/`agent-progress.md` e verificacao em `scripts/agent-verify.sh`.
+- Evidência: `scripts/agent-verify.sh` validou arquivos, frontmatter, ausencia de `.env` real e `docker compose config`; `dotnet restore`, `dotnet build` e `dotnet test` passaram, com 106 testes unitarios e projeto de integracao ainda sem testes descobertos.
+- Impacto para próximos agentes: Ao adicionar novas regras para agentes, prefira contexto progressivo e enforcement por script/check/CI. Nao inflar `copilot-instructions.md`; coloque regras por area em `.github/instructions/` e processos repetiveis em prompts ou skills. Se novas lacunas de validacao surgirem, atualize `docs/ai/validation-checklist.md` e `scripts/agent-verify.sh`.
+
 ### 2026-06-18 - Bootstrap deve ser policy-driven, opt-in e nunca loggar credenciais
 
 - Contexto: Antes do Slice 6-D, nao havia codigo de seed automatico e nenhuma politica explicita para criacao de tenant/application inicial. O codigo tinha `TenantsController` e `ApplicationsController` que o middleware bloqueava (requeriam API Key), criando um deadlock operacional. A auditoria apontou isso como gap P1-3.

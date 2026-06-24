@@ -1,17 +1,20 @@
+---
+applyTo: "src/**/*.{cs,json};tests/**/*.cs;docker-compose.yml;docs/**/*.md"
+---
+
 # Security Instructions
 
-Leia e siga `docs/harness/security.md` antes de alterar código.
+Leia `docs/harness/security.md` antes de alterar fluxos sensiveis.
 
-Regras essenciais:
-
-- Nunca armazenar número de cartão ou CVV.
-- Nunca logar secrets, API Keys, tokens ou credenciais de provedores.
+- Nunca armazenar numero de cartao ou CVV.
+- Nunca logar secrets, API Keys, tokens ou credenciais de providers.
 - Nunca commitar `.env` real ou chaves reais.
 - Armazenar API Key apenas como hash.
-- Preparar credenciais de provedores para criptografia.
-- Validar assinatura de webhooks quando o provedor suportar.
+- Preparar credenciais de providers para criptografia.
+- Validar assinatura de webhooks quando o provider suportar.
 - Exigir API Key server-to-server entre sistemas.
-- Exigir idempotência na criação de pagamentos.
+- Exigir idempotencia na criacao de pagamentos.
 - Persistir webhook antes de processar.
-- Enviar eventos de saída via Outbox.
-- Gerar AuditLog para ações administrativas.
+- Enviar eventos de saida via Outbox.
+- Gerar AuditLog para acoes administrativas.
+- Em endpoints autenticados, derive tenant/application de `ITenantContext`; nao aceite esses IDs no body.

@@ -1,18 +1,17 @@
+---
+applyTo: "src/**/*.cs"
+---
+
 # .NET Clean Architecture Instructions
 
-## Camadas esperadas
-
-- Domain: entidades, value objects, regras de domínio e contratos essenciais, sem dependência de infraestrutura.
-- Application: casos de uso, comandos, queries, validações de aplicação e orquestração transacional.
-- Infrastructure: PostgreSQL, adapters de provedores, criptografia, repositórios, Inbox/Outbox e integrações externas.
-- API: camada de entrada HTTP, autenticação, autorização, validação de requests e Swagger/OpenAPI.
-- Worker: processamento assíncrono, webhooks, retries, Outbox e tarefas recorrentes.
-
-## Regras
-
-- Evitar lógica de domínio em controllers.
+- Domain contem entidades, value objects, enums e regras de dominio sem dependencia externa.
+- Application contem casos de uso, DTOs, interfaces, validacoes de aplicacao e orquestracao.
+- Infrastructure contem PostgreSQL, adapters de providers, criptografia, repositorios, Inbox/Outbox e integracoes externas.
+- API contem controllers, middleware, autenticacao, autorizacao, validacao HTTP e Swagger/OpenAPI.
+- Worker contem `BackgroundService`, processamento assincrono, retries, Inbox/Outbox e tarefas recorrentes.
+- Evite logica de dominio em controllers.
 - Controllers devem chamar casos de uso da camada Application.
-- Infrastructure pode depender de Application e Domain; Domain não depende de nenhuma camada externa.
-- Preferir interfaces nos limites entre Application e Infrastructure.
-- Manter dependências explícitas e testáveis.
-- Não criar abstrações genéricas antes de haver necessidade real.
+- Infrastructure pode depender de Application e Domain; Domain nao depende de nenhuma camada externa.
+- Prefira interfaces nos limites entre Application e Infrastructure.
+- Mantenha dependencias explicitas e testaveis.
+- Nao crie abstracoes genericas antes de haver necessidade real.

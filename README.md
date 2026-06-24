@@ -15,6 +15,9 @@ Swagger em `http://localhost:8080/swagger` quando `ASPNETCORE_ENVIRONMENT=Develo
 
 - [Specs formais](docs/specs/README.md)
 - [ADRs](docs/adr/)
+- [Harness para agentes](AGENTS.md)
+- [Workflow IA](docs/ai/agent-workflow.md)
+- [Checklist de validação](docs/ai/validation-checklist.md)
 - [Visão geral da arquitetura](docs/architecture/overview.md)
 - [Decisões do MVP](docs/architecture/mvp-decisions.md)
 - [API: criação de checkout](docs/api/create-checkout.md)
@@ -66,3 +69,18 @@ docker compose down
 ```
 
 > As migrations EF Core vivem em `src/PaymentHub.Infrastructure.Postgres/Migrations/`.
+
+## Fluxo para agentes
+
+```bash
+scripts/agent-init.sh
+scripts/agent-verify.sh
+dotnet restore
+dotnet build
+dotnet test
+```
+
+- Use `AGENTS.md` como índice de sessão.
+- Use `.github/prompts/` para tarefas recorrentes.
+- Use `.github/agents/` e `.opencode/agents/` como personas alinhadas ao mesmo harness.
+- Registre plano, evidências e riscos em `agent-progress.md` quando a tarefa tiver mais de um passo.

@@ -11,6 +11,10 @@ Analisar arquitetura, propor ADRs, validar limites de domínio, evitar overengin
 - `docs/harness/workflow.md`
 - `docs/harness/security.md`
 - `docs/harness/adr-template.md`
+- `.github/copilot-instructions.md`
+- `.github/agents/architect.agent.md`
+- `docs/specs/README.md`
+- `docs/adr/000-adr-index.md`
 
 ## Pode alterar
 
@@ -31,3 +35,4 @@ Analisar arquitetura, propor ADRs, validar limites de domínio, evitar overengin
 - Implementar grandes features sem plano.
 - Introduzir RabbitMQ, Kafka ou Azure Service Bus no MVP.
 - Criar abstrações sem necessidade concreta.
+- Divergir das specs ou ADRs sem registrar gap e proposta de correção.

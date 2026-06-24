@@ -29,6 +29,17 @@ O harness deste repositorio combina instrucoes, estado, escopo, verificacao e li
 - `scripts/agent-init.sh`: mostra contexto inicial e comandos disponiveis.
 - `scripts/agent-verify.sh`: valida estrutura de harness, docs principais e build/test quando aplicavel.
 - `docs/ai/validation-checklist.md`: checklist proporcional ao risco.
+- `.github/workflows/ci.yml`: executa verificacao de harness, restore, build, test e publica resultados `.trx`.
+
+## Uso diario
+
+1. Rode `scripts/agent-init.sh` para ver contexto inicial, comandos e estado do git.
+2. Leia `AGENTS.md`, `.github/copilot-instructions.md` e a spec relacionada ao slice.
+3. Escolha prompt, agent ou skill apenas quando a tarefa se encaixar no processo.
+4. Registre escopo, fora de escopo, arquivos e validacoes em `agent-progress.md` quando a tarefa tiver mais de um passo.
+5. Rode `scripts/agent-verify.sh` para mudancas de harness, docs, scripts ou CI.
+6. Rode `dotnet restore`, `dotnet build` e `dotnet test` para mudancas .NET.
+7. Liste evidencias e riscos residuais antes de declarar done.
 
 ## Lifecycle
 

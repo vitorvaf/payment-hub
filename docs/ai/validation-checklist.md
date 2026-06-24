@@ -7,9 +7,11 @@ Use esta checklist junto com `docs/harness/validation.md`.
 - `AGENTS.md` aponta para docs principais.
 - `.github/copilot-instructions.md` continua curto e acionavel.
 - Instrucoes em `.github/instructions/` tem `applyTo`.
+- Agentes OpenCode continuam alinhados a `AGENTS.md`, `.github/copilot-instructions.md` e specs.
 - Prompts, agentes e skills nao duplicam specs.
 - Links principais existem.
 - Nao ha secrets, tokens ou `.env` real.
+- `scripts/agent-verify.sh` passa localmente.
 
 ## Codigo .NET
 
@@ -31,6 +33,7 @@ Use esta checklist junto com `docs/harness/validation.md`.
 
 - Nenhum dado de cartao ou CVV foi armazenado.
 - API Keys reais nao aparecem em docs, codigo ou logs.
+- Padroes obvios de secrets nao aparecem no scan do `scripts/agent-verify.sh`.
 - Endpoints autenticados usam `ITenantContext`.
 - Idempotencia foi preservada para criacao de checkout.
 - Inbox/Outbox foi preservado para webhooks/eventos.

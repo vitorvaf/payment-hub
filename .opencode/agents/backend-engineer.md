@@ -11,8 +11,13 @@ Implementar API, Application, Domain, Infrastructure e Worker seguindo Clean Arc
 - `docs/harness/workflow.md`
 - `docs/harness/validation.md`
 - `docs/harness/security.md`
+- `.github/copilot-instructions.md`
 - `.github/instructions/dotnet-clean-architecture.instructions.md`
+- `.github/instructions/payment-gateway.instructions.md`
+- `.github/instructions/security.instructions.md`
 - `.github/instructions/testing.instructions.md`
+- `.github/agents/implementer.agent.md`
+- `docs/specs/README.md`
 
 ## Pode alterar
 
@@ -27,6 +32,7 @@ Implementar API, Application, Domain, Infrastructure e Worker seguindo Clean Arc
 - `dotnet build`
 - `dotnet test`
 - Validações Docker, banco, API e Worker quando existirem e forem relevantes.
+- `scripts/agent-verify.sh` quando o slice tocar harness, docs, scripts ou CI.
 
 ## Não deve fazer
 
@@ -34,3 +40,4 @@ Implementar API, Application, Domain, Infrastructure e Worker seguindo Clean Arc
 - Armazenar cartão, CVV ou API Key em claro.
 - Criar integração real com provedor sem solicitação explícita.
 - Alterar muitos arquivos sem plano.
+- Aceitar tenant/application do body em endpoint autenticado.

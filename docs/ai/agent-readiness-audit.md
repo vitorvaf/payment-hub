@@ -32,7 +32,7 @@ Data: 2026-06-23
 | Testes unitarios | Bom | `tests/PaymentHub.UnitTests` com cobertura de dominio, application, API e providers. |
 | Testes de integracao | Parcial | Projeto existe, mas sem evidencia de cenarios completos. |
 | Testes E2E | Ausente | Nao ha suite E2E dedicada. |
-| CI/CD | Parcial | Workflow `.github/workflows/ci.yml` valida harness, restore, build e test em push para `main` e pull requests. |
+| CI/CD | Parcial | Workflow `.github/workflows/ci.yml` valida harness, restore, build e test, usa cache NuGet e publica resultados `.trx` em push para `main` e pull requests. |
 | Scripts de setup | Parcial | Docker Compose e docs existem; scripts de agente foram adicionados neste slice. |
 | Inicio de sessao por agente | Bom | Harness e docs IA indicam leitura inicial e lifecycle. |
 | Risco de fora de escopo | Parcial | Specs e harness reduzem risco; agentes ainda precisam registrar escopo. |
@@ -55,9 +55,10 @@ Data: 2026-06-23
 - Adicionar prompts, agentes e skills apenas para processos recorrentes de planejamento, implementacao, revisao, testes, debugging, ADR e evidencias.
 - Adicionar `docs/ai/` como camada de operacao e governanca para Copilot/Codex.
 - Adicionar scripts `scripts/agent-init.sh` e `scripts/agent-verify.sh` para feedback rapido.
+- Alinhar OpenCode ao mesmo contrato de `AGENTS.md`, Copilot instructions, specs e validacoes.
 
 ## Riscos residuais
 
-- CI cobre validacao basica, mas ainda nao inclui E2E, publicacao de artefatos ou validacoes com banco real.
+- CI cobre validacao basica e resultados de teste, mas ainda nao inclui E2E ou validacoes com banco real.
 - Sem E2E, fluxos reais API + banco + worker dependem de testes manuais ou integracao futura.
 - Scripts de agente validam estrutura e comandos basicos, mas nao substituem testes de produto.

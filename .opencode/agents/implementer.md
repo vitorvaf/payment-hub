@@ -5,13 +5,24 @@ temperature: 0.2
 steps: 28
 permission:
   edit:
-    '*': allow
+    '*': ask
     '.env': deny
     '.env.*': deny
     '.env.example': ask
     '**/.env': deny
     '**/secrets/**': ask
+    '**/*secret*': ask
+    '**/*credential*': ask
+    '**/appsettings*.json': ask
+    '.github/workflows/**': ask
+    'docker-compose.yml': ask
+    '.opencode/opencode.json': ask
     'src/PaymentHub.Infrastructure.Postgres/Migrations/**': ask
+  task:
+    '*': deny
+    architect-reviewer: allow
+    qa-reviewer: allow
+    security-reviewer: allow
   bash:
     '*': ask
     'git status*': allow
@@ -66,6 +77,8 @@ Executar o menor slice correto a partir do contrato do planner, mantendo Clean A
 - Arquivos estritamente necessarios ao slice.
 - Testes e docs diretamente relacionados.
 - `agent-progress.md` com plano, arquivos, comandos, evidencias e riscos.
+- Pode acionar apenas `architect-reviewer`, `qa-reviewer` e `security-reviewer`.
+- Deve pedir aprovacao para qualquer edicao; edicoes sensiveis continuam bloqueadas ou sob aprovacao explicita.
 
 ## Deve validar
 

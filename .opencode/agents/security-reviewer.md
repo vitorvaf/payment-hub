@@ -5,6 +5,7 @@ temperature: 0.05
 steps: 16
 permission:
   edit: deny
+  task: deny
   bash: ask
 ---
 
@@ -32,6 +33,7 @@ Revisar a mudanca de forma independente contra regras de seguranca, multitenancy
 ## Pode alterar
 
 - Nada por padrao. Deve reportar findings e bloqueios.
+- Nao pode acionar outros subagents por padrao.
 
 ## Deve validar
 

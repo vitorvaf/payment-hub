@@ -40,9 +40,44 @@ fi
 
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool ".opencode/opencode.json" >/dev/null || fail ".opencode/opencode.json is invalid JSON"
+  python3 - <<'PY'
+import json
+import sys
+
+with open(".opencode/opencode.json", encoding="utf-8") as file:
+    config = json.load(file)
+
+for key in ("agents", "notes"):
+    if key in config:
+        raise SystemExit(f"FAIL: .opencode/opencode.json must not use unsupported top-level {key} key")
+
+if "agent" in config:
+    raise SystemExit("FAIL: .opencode/agents/*.md is the agent source of truth; do not duplicate top-level agent config")
+
+if "prompt" in json.dumps(config):
+    raise SystemExit("FAIL: opencode.json must not contain agent prompts")
+
+if config.get("default_agent") != "planner":
+    raise SystemExit("FAIL: default_agent must be planner")
+
+skills = config.get("skills", {})
+if ".opencode/skills" not in skills.get("paths", []):
+    raise SystemExit("FAIL: .opencode/skills must be listed in skills.paths")
+
+permission = config.get("permission", {})
+if permission.get("edit", {}).get("*") != "ask":
+    raise SystemExit("FAIL: global edit permission must default to ask")
+if permission.get("bash", {}).get("git push*") != "ask":
+    raise SystemExit("FAIL: git push must ask approval")
+if permission.get("bash", {}).get("rm -rf*") != "ask":
+    raise SystemExit("FAIL: broad removals must ask approval")
+PY
+else
+  if grep -qE '"agent"[[:space:]]*:' ".opencode/opencode.json"; then
+    fail ".opencode/agents/*.md is the agent source of truth; do not duplicate top-level agent config"
+  fi
 fi
 
-require_text ".opencode/opencode.json" '"agent"[[:space:]]*:'
 require_text ".opencode/opencode.json" '"skills"[[:space:]]*:'
 
 if grep -qE '"agents"[[:space:]]*:' ".opencode/opencode.json"; then
@@ -60,6 +95,33 @@ for agent in planner implementer architect-reviewer qa-reviewer security-reviewe
   require_text "$file" '^---$'
   require_text "$file" '^description:'
   require_text "$file" '^mode: (primary|subagent|all)$'
+done
+
+for agent in planner implementer; do
+  file=".opencode/agents/${agent}.md"
+  require_text "$file" '^  task:$'
+  require_text "$file" '^    '\''\*'\'': deny$'
+  require_text "$file" '^    architect-reviewer: allow$'
+  require_text "$file" '^    qa-reviewer: allow$'
+  require_text "$file" '^    security-reviewer: allow$'
+done
+
+if grep -qE "^[[:space:]]+'\\*':[[:space:]]+allow$" ".opencode/agents/implementer.md"; then
+  fail "implementer must not have broad edit/task/bash allow"
+fi
+
+require_text ".opencode/agents/implementer.md" '^    '\''\*'\'': ask$'
+require_text ".opencode/agents/implementer.md" '^    '\''.env'\'': deny$'
+require_text ".opencode/agents/implementer.md" '^    '\''src/PaymentHub.Infrastructure.Postgres/Migrations/\*\*'\'': ask$'
+
+for agent in architect-reviewer qa-reviewer security-reviewer; do
+  file=".opencode/agents/${agent}.md"
+  require_text "$file" '^mode: subagent$'
+  require_text "$file" '^  edit: deny$'
+  require_text "$file" '^  task: deny$'
+  if grep -qE '^[[:space:]]+edit:[[:space:]]+allow$' "$file"; then
+    fail "$agent must not allow edit"
+  fi
 done
 
 echo "Checking OpenCode skills..."

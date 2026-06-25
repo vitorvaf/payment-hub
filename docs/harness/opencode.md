@@ -12,6 +12,16 @@ Guia operacional para usar OpenCode no repositorio `payment-hub`.
 
 Depois de alterar `.opencode/opencode.json`, agentes, skills ou plugins, reinicie o OpenCode. A configuracao nao e recarregada durante a sessao ativa.
 
+## Fonte de verdade
+
+- `AGENTS.md`: regras globais e indice curto.
+- `.opencode/opencode.json`: configuracao estrutural e permissoes globais.
+- `.opencode/agents/*.md`: comportamento, metadados e permissoes por agente.
+- `.opencode/skills/*/SKILL.md`: fluxos sob demanda.
+- `docs/harness/`: operacao, validacao, arquitetura e manutencao do harness.
+
+Evite duplicar instrucoes longas entre JSON, agentes, skills e docs. Se um comportamento pertence a um agente, edite o Markdown do agente.
+
 ## Agentes
 
 | Agente | Modo | Uso |
@@ -22,11 +32,11 @@ Depois de alterar `.opencode/opencode.json`, agentes, skills ou plugins, reinici
 | `qa-reviewer` | subagent | Revisar testes, regressao e evidencia |
 | `security-reviewer` | subagent | Revisar seguranca, secrets, auth e webhooks |
 
-O agente padrao e `planner`. Use `implementer` quando o plano estiver claro.
+O agente padrao e `planner`. Use `implementer` quando o plano estiver claro. `planner` e `implementer` podem acionar apenas `architect-reviewer`, `qa-reviewer` e `security-reviewer`; reviewers nao acionam outros subagents por padrao.
 
 ## Skills
 
-Skills locais ficam em `.opencode/skills/*/SKILL.md` e sao indexadas em `docs/harness/skill-index.md`.
+Skills locais ficam em `.opencode/skills/*/SKILL.md` e sao indexadas em `docs/harness/skill-index.md`. O `skills.paths` no JSON explicita esse caminho local.
 
 Use skills sob demanda:
 
@@ -82,6 +92,7 @@ Use `docker compose config` quando Docker mudar. Use `dotnet format --verify-no-
 - Nao commitar `.env` real, secrets, tokens, API Keys reais ou credenciais de provider.
 - Nao armazenar numero de cartao nem CVV.
 - Reviewers nao editam arquivos por padrao.
+- `implementer` pede aprovacao para edicoes por padrao.
 - `git push`, `git reset`, `git clean`, remocoes amplas, migrations e secrets exigem aprovacao.
 - Mudancas em auth, banco, CI, Docker ou scripts destrutivos exigem evidencia e revisao humana.
 
@@ -89,5 +100,5 @@ Use `docker compose config` quando Docker mudar. Use `dotnet format --verify-no-
 
 - Config invalida: valide contra `https://opencode.ai/config.json` e remova chaves desconhecidas.
 - Skill nao aparece: confirme `SKILL.md`, `name`, `description` e caminho `.opencode/skills/<name>/SKILL.md`.
-- Agente nao aparece: confirme arquivo em `.opencode/agents/<name>.md` e registro em `agent` no JSON.
+- Agente nao aparece: confirme arquivo em `.opencode/agents/<name>.md`, frontmatter valido e `default_agent` quando for o agente padrao.
 - Validacao falhou: registre comando, erro e menor correcao; nao declare done.

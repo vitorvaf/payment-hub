@@ -5,6 +5,11 @@ temperature: 0.1
 steps: 12
 permission:
   edit: deny
+  task:
+    '*': deny
+    architect-reviewer: allow
+    qa-reviewer: allow
+    security-reviewer: allow
   bash:
     '*': ask
     'git status*': allow
@@ -38,6 +43,7 @@ Produzir um contrato de sprint/slice antes de qualquer implementacao: objetivo, 
 
 - Nao altera arquivos por padrao.
 - Pode pedir ao implementer para registrar o plano em `agent-progress.md`.
+- Pode acionar apenas `architect-reviewer`, `qa-reviewer` e `security-reviewer`.
 
 ## Deve entregar
 

@@ -23,3 +23,11 @@ Nenhum agente deve começar implementando uma feature de pagamento sem antes pas
 - `opencode.md`: uso especifico do OpenCode neste repositorio.
 - `skill-index.md`: indice das skills sob demanda.
 - `architecture-fitness.md`: checklist de Clean Architecture e dependencias.
+
+## Mapa de fontes
+
+- `AGENTS.md`: regras globais e indice curto.
+- `.opencode/agents/*.md`: comportamento e permissoes dos agentes OpenCode.
+- `.opencode/skills/*/SKILL.md`: fluxos sob demanda.
+- `docs/specs/`: contratos de produto.
+- `docs/adr/`: decisoes arquiteturais.

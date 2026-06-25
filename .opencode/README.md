@@ -14,6 +14,13 @@ scripts/agent-init.sh
 
 After changing `.opencode/opencode.json`, agents or skills, quit and restart OpenCode. The running session keeps the already-loaded config.
 
+## Source Of Truth
+
+- Agent behavior, frontmatter metadata and per-agent permissions live in `.opencode/agents/*.md`.
+- `.opencode/opencode.json` is structural only: schema, global instructions, default agent, local skill path, watcher, compaction, output limits and global permissions.
+- Do not duplicate agent prompts, long descriptions or per-agent policy in `opencode.json`.
+- Global rules stay in `AGENTS.md`; OpenCode operation lives here and in `docs/harness/opencode.md`; on-demand flows live in `.opencode/skills/*/SKILL.md`.
+
 ## Choose Agent
 
 | Agent | Use for |
@@ -24,11 +31,11 @@ After changing `.opencode/opencode.json`, agents or skills, quit and restart Ope
 | `qa-reviewer` | Independent test and validation review |
 | `security-reviewer` | Independent security review |
 
-`planner` is the default primary agent. Reviewers are subagents and do not edit files by default.
+`planner` is the default primary agent. Reviewers are subagents, do not edit files by default and cannot call other subagents by default.
 
 ## Load Skills
 
-Skills live under `.opencode/skills/<name>/SKILL.md` and are registered through `skills.paths` in `opencode.json`.
+Skills live under `.opencode/skills/<name>/SKILL.md`. `skills.paths` remains in `opencode.json` to make the local path explicit for this repository.
 
 Use skills only when relevant:
 
@@ -45,7 +52,8 @@ Use skills only when relevant:
 3. Record objective, out of scope, plan, risks and validations in `agent-progress.md`.
 4. Switch to `implementer` for one small slice.
 5. Ask `architect-reviewer`, `qa-reviewer` or `security-reviewer` when risk exists.
-6. Run validations and record evidence.
+6. Run validations.
+7. Record evidence in `agent-progress.md`.
 
 ## Bugfix Flow
 
@@ -88,11 +96,13 @@ Use `docker compose config` for Docker changes. Use `dotnet format --verify-no-c
 - Authenticated endpoints derive tenant/application from `ITenantContext`, never from request body.
 - Webhooks are persisted in Inbox before processing and outgoing events go through Outbox.
 - `git push`, destructive shell actions, broad removals, migrations and secret-related edits require approval.
+- `implementer` edits use `ask` by default; `.env` is denied and sensitive configs/migrations require approval.
 
 ## Config Rules
 
 - Keep only keys supported by `https://opencode.ai/config.json`.
-- Use top-level `agent`, not unsupported `agents`.
+- Do not use unsupported top-level `agents`.
+- Do not add detailed top-level `agent` entries unless there is a concrete schema-supported need that cannot live in `.opencode/agents/*.md`.
 - Do not add top-level `notes`.
 - Keep long guidance in `docs/harness/` or skills, not in `opencode.json`.
 

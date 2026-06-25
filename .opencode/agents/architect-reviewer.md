@@ -5,6 +5,7 @@ temperature: 0.1
 steps: 14
 permission:
   edit: deny
+  task: deny
   bash: ask
 ---
 
@@ -31,6 +32,7 @@ Avaliar a mudanca de forma independente contra Clean Architecture, specs, ADRs, 
 ## Pode alterar
 
 - Nada por padrao. Deve reportar findings, riscos e recomendacoes.
+- Nao pode acionar outros subagents por padrao.
 
 ## Deve validar
 

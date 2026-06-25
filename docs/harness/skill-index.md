@@ -2,6 +2,8 @@
 
 Skills sao contexto sob demanda para reduzir o prompt inicial do OpenCode. Use apenas quando o trabalho encaixar na descricao.
 
+As skills locais ficam em `.opencode/skills/<name>/SKILL.md`. O caminho `.opencode/skills` permanece em `skills.paths` para explicitar o carregamento local do repositorio.
+
 ## OpenCode skills
 
 | Skill | Quando usar | Evidencia principal |
@@ -20,6 +22,7 @@ Peça a skill pelo nome quando iniciar a etapa. Exemplo: use `payment-slice` par
 
 - Skills nao substituem specs nem ADRs.
 - Skills devem apontar para fontes de verdade, nao copiar contratos extensos.
+- Skills nao definem comportamento permanente de agentes; isso fica em `.opencode/agents/*.md`.
 - Skills experimentais devem usar nomes explicitos e permissao `ask` no OpenCode.
 - Toda nova skill precisa de `SKILL.md`, frontmatter `name` e `description` especifica.
 

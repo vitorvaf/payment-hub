@@ -22,6 +22,8 @@ Este documento define como agentes trabalham no Payment Hub sem transformar `AGE
 
 Reviewers sao avaliadores independentes. Eles nao devem editar arquivos por padrao e nao substituem revisao humana em mudancas sensiveis.
 
+`planner` e `implementer` podem acionar apenas `architect-reviewer`, `qa-reviewer` e `security-reviewer`. Reviewers nao chamam outros subagents por padrao.
+
 ## Escolha de skill
 
 | Situacao | Skill |
@@ -33,6 +35,15 @@ Reviewers sao avaliadores independentes. Eles nao devem editar arquivos por padr
 | Specs, ADRs, docs e progresso | `docs-maintenance` |
 
 Use skills sob demanda para reduzir contexto inicial. Nao carregue todas as skills por padrao.
+
+## Onde cada instrucao mora
+
+- Regras globais e indice: `AGENTS.md`.
+- Operacao OpenCode: `.opencode/README.md` e `docs/harness/opencode.md`.
+- Comportamento e permissoes dos agentes: `.opencode/agents/*.md`.
+- Fluxos sob demanda: `.opencode/skills/*/SKILL.md`.
+- Contratos de produto: `docs/specs/`.
+- Decisoes arquiteturais: `docs/adr/`.
 
 ## Fluxo para tarefa pequena
 

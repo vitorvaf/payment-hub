@@ -5,6 +5,7 @@ temperature: 0.1
 steps: 14
 permission:
   edit: deny
+  task: deny
   bash: ask
 ---
 
@@ -30,6 +31,7 @@ Avaliar cobertura, regressao e evidencias de validacao sem modificar a implement
 ## Pode alterar
 
 - Nada por padrao. Deve produzir lacunas de teste e comandos recomendados.
+- Nao pode acionar outros subagents por padrao.
 
 ## Deve validar
 

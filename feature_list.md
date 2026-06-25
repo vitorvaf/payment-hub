@@ -12,6 +12,7 @@ Backlog leve para agentes. Use para registrar itens que nao serao implementados 
 | AI-006 | Docs | Documentar uso diario do harness | Concluido | `docs/ai/harness-engineering.md` | README e docs IA indicam `agent-init`, prompts, agents, skills, progresso e validacao. |
 | AI-007 | Auditoria | Rodar proxima auditoria specs versus codigo | Concluido | `docs/audits/spec-adherence-refresh-2026-06-24.md` | Auditoria curta executada sem corrigir produto; gaps viraram backlog. |
 | AI-008 | Segurança | Avaliar secret scanning dedicado no CI | Aberto | `docs/specs/011-security-and-compliance.md` | Considerar Gitleaks ou ferramenta equivalente alem do scan simples atual. |
+| AI-009 | Harness | Evoluir OpenCode com agentes, skills e checks locais | Concluido | `docs/harness/opencode.md` | `opencode.json` usa `agent`, skills locais, permissao segura e scripts docs/architecture/smoke. |
 | PH-SEC-001 | Segurança | Proteger `ApplicationClient.WebhookSecret` em repouso | Aberto | `docs/specs/011-security-and-compliance.md` | Gap P1; decidir ADR-0007 e implementar protecao. |
 | PH-WORKER-001 | Worker | Substituir dispatcher no-op do Outbox worker | Aberto | `docs/specs/007-inbox-outbox-workers.md` | Gap P1; evitar marcar envio sem dispatch HTTP real. |
 | PH-SEC-002 | Segurança | Validar assinatura de webhooks externos reais | Aberto | `docs/specs/006-provider-webhooks.md` | Necessario antes de ativar providers reais fora de sandbox. |

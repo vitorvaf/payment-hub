@@ -30,7 +30,7 @@ Este repositorio usa um harness operacional para orientar agentes de IA, GitHub 
 - Escolha validacoes proporcionais pelo guia `docs/harness/validation.md`.
 - Para mudancas de codigo .NET, considere no minimo `dotnet restore`, `dotnet build` e `dotnet test`.
 - Para Docker, valide `docker compose config` antes de subir servicos.
-- Para mudancas apenas Markdown/harness, valide existencia dos arquivos, links principais, ausencia de secrets e consistencia entre `AGENTS.md`, Copilot e `docs/ai/`.
+- Para mudancas apenas Markdown/harness, valide existencia dos arquivos, links principais, ausencia de secrets e consistencia entre `AGENTS.md`, Copilot, OpenCode e `docs/ai/`.
 - Se um comando nao puder rodar, registre o motivo e o risco residual.
 
 ## Done
@@ -58,6 +58,9 @@ Uma tarefa so pode ser declarada concluida quando:
 - [Validacao](docs/harness/validation.md)
 - [Seguranca](docs/harness/security.md)
 - [Aprendizados](docs/harness/learnings.md)
+- [Modelo operacional dos agentes](docs/harness/agent-operating-model.md)
+- [OpenCode harness](docs/harness/opencode.md)
+- [Indice de skills](docs/harness/skill-index.md)
 - [Specs formais](docs/specs/README.md)
 - [ADRs](docs/adr/)
 - [Copilot](.github/copilot-instructions.md)

@@ -11,6 +11,13 @@ Este arquivo registra aprendizados técnicos do projeto que devem orientar futur
 - Evidência:
 - Impacto para próximos agentes:
 
+### 2026-06-24 - OpenCode harness deve separar config estrita, agentes curtos e skills sob demanda
+
+- Contexto: A evolucao do harness OpenCode precisava adicionar agentes primarios/subagents, skills locais, permissoes seguras e scripts de verificacao sem quebrar o schema estrito do OpenCode nem inflar `AGENTS.md`.
+- Decisão: Manter `.opencode/opencode.json` apenas com chaves suportadas (`agent`, `skills`, `permission`, `watcher`, `tool_output`, `compaction`), registrar prompts em `.opencode/agents/*.md`, mover fluxos para `docs/harness/opencode.md` e `agent-operating-model.md`, e criar skills pequenas em `.opencode/skills/*/SKILL.md`.
+- Evidência: `scripts/agent-docs-check.sh` valida agentes, skills, ausencia de `agents`/`notes` top-level e tamanho de `AGENTS.md`; `scripts/agent-architecture-check.sh` valida limites de camadas; `scripts/agent-smoke.sh` combina checks locais sem exigir provider real.
+- Impacto para próximos agentes: Ao evoluir OpenCode, consulte `https://opencode.ai/config.json` antes de adicionar chaves, use `agent` no singular, mantenha reviewers com `edit: deny`, registre skills no indice e reinicie o OpenCode apos mudar config/agentes/skills.
+
 ### 2026-06-23 - Agent-readiness funciona melhor com contexto progressivo e verificacao mecanica
 
 - Contexto: A configuracao de Copilot/Codex precisava cobrir auditoria, instrucoes, prompts, agentes, skills, docs de uso, estado e verificacao sem transformar `copilot-instructions.md` em uma enciclopedia.

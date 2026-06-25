@@ -1,5 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "share": "disabled",
+  "snapshot": true,
+  "default_agent": "planner",
   "instructions": [
     "AGENTS.md",
     "docs/harness/project-context.md",
@@ -7,5 +10,175 @@
     "docs/harness/validation.md",
     "docs/harness/security.md",
     "docs/harness/learnings.md"
-  ]
+  ],
+  "skills": {
+    "paths": [
+      ".opencode/skills"
+    ]
+  },
+  "watcher": {
+    "ignore": [
+      "**/bin/**",
+      "**/obj/**",
+      "TestResults/**",
+      ".opencode/node_modules/**"
+    ]
+  },
+  "tool_output": {
+    "max_lines": 400,
+    "max_bytes": 20000
+  },
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "tail_turns": 4
+  },
+  "permission": {
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "todowrite": "allow",
+    "question": "allow",
+    "webfetch": "ask",
+    "skill": {
+      "*": "allow",
+      "ask": "ask",
+      "experimental-*": "ask"
+    },
+    "edit": {
+      "*": "ask",
+      ".env": "deny",
+      ".env.*": "deny",
+      ".env.example": "ask",
+      "**/.env": "deny",
+      "**/secrets/**": "ask",
+      "src/PaymentHub.Infrastructure.Postgres/Migrations/**": "ask"
+    },
+    "bash": {
+      "*": "ask",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "dotnet restore*": "allow",
+      "dotnet build*": "allow",
+      "dotnet test*": "allow",
+      "dotnet format*": "allow",
+      "docker compose config*": "allow",
+      "scripts/agent-init.sh": "allow",
+      "./scripts/agent-init.sh": "allow",
+      "scripts/agent-verify.sh": "allow",
+      "./scripts/agent-verify.sh": "allow",
+      "scripts/agent-docs-check.sh": "allow",
+      "./scripts/agent-docs-check.sh": "allow",
+      "scripts/agent-architecture-check.sh": "allow",
+      "./scripts/agent-architecture-check.sh": "allow",
+      "scripts/agent-smoke.sh": "allow",
+      "./scripts/agent-smoke.sh": "allow",
+      "git push*": "ask",
+      "git reset*": "ask",
+      "git checkout*": "ask",
+      "git clean*": "ask",
+      "rm *": "ask",
+      "rm -r*": "ask",
+      "rm -f*": "ask",
+      "rm -rf*": "ask"
+    }
+  },
+  "agent": {
+    "planner": {
+      "description": "Planeja slices do Payment Hub antes da implementacao.",
+      "mode": "primary",
+      "temperature": 0.1,
+      "steps": 12,
+      "permission": {
+        "edit": "deny",
+        "bash": {
+          "*": "ask",
+          "git status*": "allow",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "scripts/agent-init.sh": "allow",
+          "./scripts/agent-init.sh": "allow"
+        }
+      }
+    },
+    "implementer": {
+      "description": "Executa um slice pequeno com testes, validacao e evidencias.",
+      "mode": "primary",
+      "temperature": 0.2,
+      "steps": 28,
+      "permission": {
+        "edit": {
+          "*": "allow",
+          ".env": "deny",
+          ".env.*": "deny",
+          ".env.example": "ask",
+          "**/.env": "deny",
+          "**/secrets/**": "ask",
+          "src/PaymentHub.Infrastructure.Postgres/Migrations/**": "ask"
+        },
+        "bash": {
+          "*": "ask",
+          "git status*": "allow",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "dotnet restore*": "allow",
+          "dotnet build*": "allow",
+          "dotnet test*": "allow",
+          "dotnet format*": "allow",
+          "docker compose config*": "allow",
+          "scripts/agent-init.sh": "allow",
+          "./scripts/agent-init.sh": "allow",
+          "scripts/agent-verify.sh": "allow",
+          "./scripts/agent-verify.sh": "allow",
+          "scripts/agent-docs-check.sh": "allow",
+          "./scripts/agent-docs-check.sh": "allow",
+          "scripts/agent-architecture-check.sh": "allow",
+          "./scripts/agent-architecture-check.sh": "allow",
+          "scripts/agent-smoke.sh": "allow",
+          "./scripts/agent-smoke.sh": "allow",
+          "git push*": "ask",
+          "git reset*": "ask",
+          "git checkout*": "ask",
+          "git clean*": "ask",
+          "rm *": "ask",
+          "rm -r*": "ask",
+          "rm -f*": "ask",
+          "rm -rf*": "ask"
+        }
+      }
+    },
+    "architect-reviewer": {
+      "description": "Revisa arquitetura, ADRs e limites de Clean Architecture.",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "steps": 14,
+      "permission": {
+        "edit": "deny",
+        "bash": "ask"
+      }
+    },
+    "qa-reviewer": {
+      "description": "Revisa testes, regressao, idempotencia, retries e evidencias.",
+      "mode": "subagent",
+      "temperature": 0.1,
+      "steps": 14,
+      "permission": {
+        "edit": "deny",
+        "bash": "ask"
+      }
+    },
+    "security-reviewer": {
+      "description": "Revisa multitenancy, API Keys, HMAC, webhooks, logs e secrets.",
+      "mode": "subagent",
+      "temperature": 0.05,
+      "steps": 16,
+      "permission": {
+        "edit": "deny",
+        "bash": "ask"
+      }
+    }
+  }
 }

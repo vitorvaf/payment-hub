@@ -4,18 +4,19 @@ Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e v
 
 ## Entrada atual
 
-- Data: 2026-06-23
-- Agente/superficie: Codex local
-- Objetivo: Configurar o repositorio para trabalhar melhor com GitHub Copilot, Codex e agentes de codigo, com auditoria, instrucoes, prompts, agentes, skills, docs de IA, estado e scripts de verificacao.
-- Fora de escopo: Implementar features de produto, alterar dominio de pagamento, criar CI/CD real ou adicionar testes E2E.
-- Specs/ADRs lidas: `docs/specs/README.md`, `docs/harness/project-context.md`, `docs/harness/workflow.md`, `docs/harness/validation.md`, `docs/harness/security.md`, `docs/harness/learnings.md`.
-- Plano: Auditar estrutura existente; fortalecer `AGENTS.md` e Copilot; adicionar docs `docs/ai`; criar prompts, agentes e skills; adicionar scripts e estado; validar.
-- Arquivos alterados: `AGENTS.md`, `.github/copilot-instructions.md`, `.github/instructions/*`, `.github/prompts/*`, `.github/agents/*`, `.github/skills/*`, `docs/ai/*`, `feature_list.md`, `agent-progress.md`, `scripts/agent-init.sh`, `scripts/agent-verify.sh`, `docs/harness/learnings.md`.
-- Validacoes planejadas: `scripts/agent-verify.sh`, `dotnet restore`, `dotnet build`, `dotnet test`.
-- Validacoes executadas: `scripts/agent-verify.sh` passou; `dotnet restore` passou; `dotnet build` passou com 0 warnings/0 errors; `dotnet test` passou com 106 testes unitarios e projeto de integracao sem testes descobertos.
-- Evidencias: Auditoria em `docs/ai/agent-readiness-audit.md`; scripts executaveis criados; `docker compose config` validado pelo script.
-- Riscos residuais: CI/CD e E2E continuam ausentes; testes de integracao ainda sao estruturais.
-- Aprendizados para `docs/harness/learnings.md`: Harness agent-ready deve separar instrucao curta, docs progressivos, estado e verificacao mecanica.
+- Data: 2026-06-24
+- Agente/superficie: OpenCode
+- Objetivo: Evoluir o harness OpenCode para agentes primarios/subagents, skills sob demanda, docs operacionais e validacoes rapidas sem alterar dominio de pagamento.
+- Fora de escopo: Implementar feature funcional de negocio, alterar dominio/API/Worker, criar provider real, introduzir broker externo, alterar secrets, criar dependencias pesadas ou mudar CI/CD alem dos checks locais de harness.
+- Specs/ADRs/docs lidas: `AGENTS.md`, `.opencode/README.md`, `.opencode/opencode.json`, `.opencode/agents/*`, `.github/copilot-instructions.md`, `.github/agents/*`, `.github/instructions/*`, `.github/prompts/*`, `docs/harness/*`, `docs/specs/README.md`, `docs/adr/000-adr-index.md`, `docs/ai/*`.
+- Discovery: `.opencode/opencode.json` ainda so carregava instrucoes; agentes OpenCode existentes tinham nomes legados e nao tinham frontmatter de agente; nao havia `.opencode/skills`; scripts nao verificavam skills/agentes novos; docs de operacao OpenCode estavam incompletos; `.codex/` e `.agents/` existem vazios; `AGENTS.md` continua curto e adequado como indice.
+- Plano: Atualizar `opencode.json` com `agent`, permissao e skills; criar/ajustar agentes OpenCode curtos; criar skills locais; adicionar docs complementares de harness; criar scripts seguros de arquitetura/docs/smoke; atualizar README OpenCode e checks; validar schema, scripts e build/test.
+- Arquivos alterados/criados/removidos: `.opencode/opencode.json`, `.opencode/README.md`, `.opencode/agents/planner.md`, `.opencode/agents/implementer.md`, `.opencode/agents/architect-reviewer.md`, `.opencode/agents/qa-reviewer.md`, `.opencode/agents/security-reviewer.md`, `.opencode/skills/*/SKILL.md`, `docs/harness/agent-operating-model.md`, `docs/harness/architecture-fitness.md`, `docs/harness/skill-index.md`, `docs/harness/opencode.md`, `docs/harness/README.md`, `scripts/agent-architecture-check.sh`, `scripts/agent-docs-check.sh`, `scripts/agent-smoke.sh`, `scripts/agent-init.sh`, `scripts/agent-verify.sh`, `AGENTS.md`, `feature_list.md`, `docs/harness/learnings.md`, `agent-progress.md`; removidos agentes OpenCode legados `architect.md`, `backend-engineer.md` e `qa-engineer.md` para evitar duplicidade com os novos nomes.
+- Validacoes planejadas: validacao manual do schema de `.opencode/opencode.json`, `scripts/agent-init.sh`, `scripts/agent-docs-check.sh`, `scripts/agent-architecture-check.sh`, `scripts/agent-smoke.sh`, `scripts/agent-verify.sh`, `dotnet restore`, `dotnet build`, `dotnet test`.
+- Validacoes executadas: `scripts/agent-init.sh` passou; `scripts/agent-docs-check.sh` passou; `scripts/agent-architecture-check.sh` passou; `scripts/agent-verify.sh` passou; `scripts/agent-smoke.sh` passou com `dotnet restore` e `dotnet build --no-restore` em 0 erros/0 warnings; `dotnet restore` passou; `/usr/bin/dotnet build` passou com 0 erros/0 warnings; `/usr/bin/dotnet test` passou com 106 testes unitarios e projeto de integracao sem testes descobertos; `opencode debug config >/dev/null` passou; `docker compose config` passou via verify/smoke.
+- Evidencias: `.opencode/opencode.json` validado pela CLI com chave `agent` e sem `agents`/`notes`; cinco agentes OpenCode registrados; cinco skills locais com frontmatter validado; docs complementares criados em `docs/harness/`; scripts novos executaveis e validados; `AGENTS.md` mantido como indice curto.
+- Riscos residuais: OpenCode precisa ser reiniciado para carregar config/agentes/skills novos; testes de integracao continuam sem testes descobertos; checks de arquitetura/docs sao heurísticos e nao substituem revisao humana; config global do usuario ainda pode injetar plugins/MCP fora do controle do repositorio.
+- Aprendizados para `docs/harness/learnings.md`: Registrado em `2026-06-24 - OpenCode harness deve separar config estrita, agentes curtos e skills sob demanda`.
 
 ## Historico
 

@@ -16,3 +16,10 @@ O objetivo do harness é padronizar como agentes entendem contexto, planejam tar
 ## Princípio
 
 Nenhum agente deve começar implementando uma feature de pagamento sem antes passar por descoberta, plano, validação e evidências.
+
+## Guias complementares
+
+- `agent-operating-model.md`: escolha de agente/skill, fluxos por tamanho de tarefa, progresso, falhas e ADRs.
+- `opencode.md`: uso especifico do OpenCode neste repositorio.
+- `skill-index.md`: indice das skills sob demanda.
+- `architecture-fitness.md`: checklist de Clean Architecture e dependencias.

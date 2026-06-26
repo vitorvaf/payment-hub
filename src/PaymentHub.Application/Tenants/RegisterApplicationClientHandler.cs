@@ -18,6 +18,7 @@ public sealed class RegisterApplicationClientHandler : IRegisterApplicationClien
     private readonly ITenantRepository _tenants;
     private readonly IApiKeyRepository _apiKeys;
     private readonly IApiKeyHasher _hasher;
+    private readonly IWebhookSecretProtector _webhookSecretProtector;
     private readonly IUnitOfWork _uow;
 
     public RegisterApplicationClientHandler(
@@ -25,12 +26,14 @@ public sealed class RegisterApplicationClientHandler : IRegisterApplicationClien
         ITenantRepository tenants,
         IApiKeyRepository apiKeys,
         IApiKeyHasher hasher,
+        IWebhookSecretProtector webhookSecretProtector,
         IUnitOfWork uow)
     {
         _apps = apps;
         _tenants = tenants;
         _apiKeys = apiKeys;
         _hasher = hasher;
+        _webhookSecretProtector = webhookSecretProtector;
         _uow = uow;
     }
 
@@ -41,11 +44,16 @@ public sealed class RegisterApplicationClientHandler : IRegisterApplicationClien
         if (!await _tenants.ExistsAsync(request.TenantId, cancellationToken))
             throw new InvalidOperationException($"Tenant {request.TenantId} does not exist.");
 
+        var protectedWebhookSecret = string.IsNullOrWhiteSpace(request.WebhookSecret)
+            ? null
+            : _webhookSecretProtector.Protect(request.WebhookSecret);
+
         var app = new ApplicationClient(
             Guid.NewGuid(),
             request.TenantId,
             request.Name,
-            request.WebhookUrl);
+            request.WebhookUrl,
+            protectedWebhookSecret);
 
         if (request.DefaultProvider.HasValue)
             app.SetDefaultProvider(request.DefaultProvider.Value);
@@ -70,6 +78,7 @@ public sealed class RegisterApplicationClientHandler : IRegisterApplicationClien
             app.TenantId,
             app.Name,
             app.WebhookUrl,
+            app.HasWebhookSecret,
             app.DefaultProvider,
             app.Status.ToString(),
             rawKey);
@@ -90,5 +99,6 @@ public sealed class RegisterApplicationClientValidator : AbstractValidator<Regis
         RuleFor(x => x.TenantId).NotEmpty();
         RuleFor(x => x.Name).NotEmpty().MaximumLength(200);
         RuleFor(x => x.WebhookUrl).MaximumLength(2000).When(x => !string.IsNullOrWhiteSpace(x.WebhookUrl));
+        RuleFor(x => x.WebhookSecret).MaximumLength(2000).When(x => !string.IsNullOrWhiteSpace(x.WebhookSecret));
     }
 }

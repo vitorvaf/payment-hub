@@ -50,6 +50,7 @@ Consolidar regras de seguranca obrigatorias para o MVP.
 |------|----------|
 | API Key | `Authorization: Bearer`, hash HMAC no banco, claro exibido uma vez |
 | Provider credentials | JSON protegido por criptografia |
+| Application webhook secret | `webhook_secret` persistido como blob cifrado (AES-CBC, chave em `PaymentHub:WebhookSecretEncryptionKey`). Cru apenas em memoria no ponto de assinatura HMAC |
 | Webhook interno | `X-PaymentHub-Signature` HMAC-SHA256 sobre `timestamp.rawBody` |
 | Webhook externo | Assinatura validada quando provider oferecer |
 | Logs | correlation id e contexto sem secrets |
@@ -85,6 +86,31 @@ Exemplo C# para gerar hex:
 var signatureBytes = HMACSHA256.HashData(secretBytes, signedPayloadBytes);
 var signature = Convert.ToHexString(signatureBytes).ToLowerInvariant();
 ```
+
+### Protecao de `ApplicationClient.WebhookSecret` em repouso
+
+O segredo de webhook da application e usado internamente para assinar webhooks internos (`X-PaymentHub-Signature` HMAC-SHA256 sobre `{timestamp}.{rawBody}`). O sistema precisa **recuperar** o segredo em memoria para assinar e verificar; portanto, **nao** se usa hash unidirecional.
+
+Regra central:
+
+```text
+persistencia: valor protegido (AES-CBC com IV randomico + prefixo de proposito)
+uso interno: valor desprotegido apenas no momento da assinatura
+resposta/log: nunca expor (nem raw, nem protegido)
+```
+
+Implementacao:
+
+- Interface: `IWebhookSecretProtector` em `PaymentHub.Application/Abstractions/Security/ICrypto.cs` (mesma familia de `ICredentialProtector`).
+- Implementacao: `AesWebhookSecretProtector` em `PaymentHub.Infrastructure.Postgres/Security/CryptoServices.cs`. Cifra AES-CBC com chave lida de `PaymentHub:WebhookSecretEncryptionKey` (32 bytes; valores menores sao preenchidos com `0` ate 32 bytes; valor ausente lanca `InvalidOperationException`). O payload cifrado carrega um prefixo `PaymentHub.ApplicationClient.WebhookSecret.v1` antes do segredo raw, e o `Unprotect` rejeita blobs sem esse prefixo (comparacao em tempo constante via `CryptographicOperations.FixedTimeEquals`).
+- Registro DI: `services.AddSingleton<IWebhookSecretProtector, AesWebhookSecretProtector>()` em `PaymentHub.Infrastructure.Postgres/PostgresServiceCollectionExtensions.cs`.
+- Persistencia: a coluna `application_clients.webhook_secret` armazena o blob cifrado (Base64). `ApplicationClient.WebhookSecret` (private set) so aceita blobs ja protegidos. Construtor e `UpdateWebhook(...)` exigem `protectedWebhookSecret`.
+- API: o DTO `ApplicationClientResponseDto` expoe apenas `hasWebhookSecret: bool`. Nao expoe `webhookSecret`, `protectedWebhookSecret`, `encryptedWebhookSecret` ou similar. O DTO `RegisterApplicationClientRequestDto` aceita `webhookSecret` (raw) no body para criacao, e o handler o protege antes de persistir.
+- Leitura: `HttpApplicationWebhookDispatcher.DispatchAsync` chama `IWebhookSecretProtector.Unprotect` imediatamente antes de `_signer.Sign(...)`. Se `Unprotect` falhar (chave diferente, blob corrompido), o dispatcher loga o erro e **nao** envia a requisicao HTTP.
+- Logs: o segredo raw nunca aparece em logs. O valor protegido tambem nao deve aparecer em logs (a unica exposicao via log do seeder e a flag `hasProtectedWebhook={bool}`).
+- Configuracao: `PaymentHub:WebhookSecretEncryptionKey` e obrigatorio para qualquer codepath que cifre ou decifre. Em `Development`/`Test`, `appsettings.Development.json` traz valor fake explicito (`dev-webhook-secret-key-change-me-32bytes`). Em `Production`, a chave precisa vir de variavel de ambiente ou secret manager; nenhum fallback hardcoded e gerado em runtime (ausencia da chave lanca `InvalidOperationException`).
+- Migration: nenhuma migration estrutural foi necessaria. A coluna `webhook_secret` (maxLength=500, nullable) foi mantida; o conteudo passa a ser o blob cifrado em Base64. Nao ha dados produtivos pre-existentes.
+- Tests: `AesWebhookSecretProtectorTests` (11 testes), `RegisterApplicationClientHandlerTests` (10 testes), `DevelopmentDataSeederTests` (3 testes novos), `HttpApplicationWebhookDispatcherTests` (3 testes). Total adicionado pelo Slice 6-C: 27 testes.
 
 ## Criterios de aceite
 

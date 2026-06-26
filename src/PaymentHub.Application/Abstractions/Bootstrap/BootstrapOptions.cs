@@ -13,4 +13,6 @@ public sealed class BootstrapOptions
     public string? DevelopmentTenantSlug { get; set; } = "dev-tenant";
 
     public string? DevelopmentApplicationName { get; set; } = "dev-app";
+
+    public string? DevelopmentWebhookSecret { get; set; }
 }

@@ -78,7 +78,26 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | 6 | 6-B | Unit | Repositorio recebe `ProviderAccount` no escopo correto | Teste passa | Passou | `PASS` | 2026-06-18 |
 | 6 | 6-B | Unit | Caminho feliz continua funcionando | Teste passa | Passou | `PASS` | 2026-06-18 |
 | 6 | 6-B | Unit | `ApiKeyAuthenticationMiddleware` continua passando 11 testes (sem regressao) | Teste passa | 11 testes passando | `PASS` | 2026-06-18 |
-| 6 | 6-C | Unit | WebhookSecret criptografado no banco | Nao visievel em texto claro | `PENDING` | `PENDING` | — |
+| 6 | 6-C | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `dotnet test PaymentHub.slnx` | Todos os testes passando | 133 testes passando | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `dotnet test --filter "FullyQualifiedName~WebhookSecret"` | Cobre protector, handler, seeder e dispatcher | 25 testes passando | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `dotnet test --filter "FullyQualifiedName~Bootstrap"` | Sem regressao | 15 testes passando | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `dotnet test --filter "FullyQualifiedName~ApiKeyAuthenticationMiddlewareTests"` | Sem regressao | 11 testes passando | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `dotnet test --filter "FullyQualifiedName~ProviderAccount"` | Sem regressao | 15 testes passando | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `IWebhookSecretProtector` roundtrip de plaintext | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `IWebhookSecretProtector.Protect` nao retorna plaintext | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `IWebhookSecretProtector.Protect` produz ciphertexts diferentes por chamada | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `IWebhookSecretProtector.Unprotect` falha em payload com purpose incorreto | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `IWebhookSecretProtector` lanca `InvalidOperationException` se chave vazia | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `RegisterApplicationClientHandler` protege `webhookSecret` antes de persistir | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `RegisterApplicationClientHandler` nao expoe secret em DTO | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `RegisterApplicationClientHandler` retorna `hasWebhookSecret=true` quando secret presente | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `RegisterApplicationClientHandler` continua retornando API Key | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `DevelopmentDataSeeder` protege segredo de dev antes de persistir | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `DevelopmentDataSeeder` nao loga raw webhook secret | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `HttpApplicationWebhookDispatcher` desprotege segredo antes de assinar | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `HttpApplicationWebhookDispatcher` nao envia request se `Unprotect` falhar | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `HttpApplicationWebhookDispatcher` nao inclui signature quando nao ha secret | Teste passa | Passou | `PASS` | 2026-06-25 |
 | 6 | 6-D | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings | `PASS` | 2026-06-18 |
 | 6 | 6-D | Unit | `dotnet test --filter "FullyQualifiedName~Bootstrap"` | Todos passando | 15 testes passando | `PASS` | 2026-06-18 |
 | 6 | 6-D | Unit | `dotnet test PaymentHub.slnx` | >= 106 testes passando | 106 testes passando | `PASS` | 2026-06-18 |

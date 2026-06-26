@@ -27,6 +27,7 @@ Definir autorizacao server-to-server por API Key e isolamento por `tenant_id` e 
 - Endpoints autenticados de mutacao (`POST /api/v1/provider-accounts`, `POST /api/v1/checkouts`, `GET /api/v1/payments`, etc.) devem derivar `tenant_id` e `application_id` exclusivamente de `ITenantContext`, populado pelo middleware apos validar API Key, escopo e status ativo.
 - `tenant_id` e `application_id` enviados no body/headers por um cliente autenticado nunca devem sobrescrever o contexto autenticado.
 - Respostas de endpoints autenticados nao podem incluir credenciais, segredos ou material criptografado.
+- `ApplicationClient.WebhookSecret` e persistido como blob cifrado (`AES-CBC` com chave em `PaymentHub:WebhookSecretEncryptionKey`). A coluna `application_clients.webhook_secret` guarda apenas o blob cifrado. O DTO `ApplicationClientResponseDto` expoe apenas `hasWebhookSecret: bool`; nem o segredo raw nem o protegido sao retornados por nenhum endpoint. Detalhes em `011-security-and-compliance.md`.
 
 ## Politica de bootstrap
 

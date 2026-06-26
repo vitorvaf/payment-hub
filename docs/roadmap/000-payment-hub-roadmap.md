@@ -20,6 +20,8 @@ Status possivel: `NOT_STARTED` | `DISCOVERY` | `SPEC_DRAFTED` | `SPEC_REVIEW_REQ
 
 > **Slice 6-D (2026-06-18):** gap P1-3 (politica de bootstrap/admin seed) foi resolvido. `IBootstrapPolicy` + `BootstrapOptions` + `IDevelopmentDataSeeder` formalizam a politica: `Production` nao cria nada automaticamente (sem opt-in explicito `AllowProductionBootstrap=true`); `Development`/`Test` podem rodar seed idempotente de tenant+application apenas com `Bootstrap:Enabled=true` e `Bootstrap:SeedDevelopmentData=true`; logs nao registram API Key, secrets ou credenciais. Restam 1 gap P1 proprio da Phase 6: P1-5 (`WebhookSecret` em texto claro). Phase 6 segue `IMPLEMENTING` ate P1-5 ser resolvido.
 
+> **Slice 6-C (2026-06-25):** gap P1-5 (`ApplicationClient.WebhookSecret` persistido em texto claro) foi resolvido. `IWebhookSecretProtector` + `AesWebhookSecretProtector` passam a cifrar o segredo antes de persistir (AES-CBC com chave em `PaymentHub:WebhookSecretEncryptionKey` e prefixo `PaymentHub.ApplicationClient.WebhookSecret.v1`). DTO `ApplicationClientResponseDto` expoe apenas `hasWebhookSecret: bool`. `HttpApplicationWebhookDispatcher` chama `Unprotect` no momento da assinatura HMAC e aborta o dispatch se a decifragem falhar. Seedor de desenvolvimento protege tambem o segredo fake opcional. Phase 6 alcancou 0 gaps P1 proprios. Detalhes em `docs/audits/slice-6c-webhook-secret-protection-report-2026-06-25.md`.
+
 > **Regra para o agente:** `IMPLEMENTED` nao equivale a `VALIDATED`. Uma phase marcada como `IMPLEMENTED` pode ainda ter gaps que a impedem de ir para producao. Verificar sempre a secao "Gaps conhecidos" da phase e os registros em `docs/audits/spec-adherence-audit-2026-06-17.md` antes de tratar a phase como finalizada.
 
 ---
@@ -342,9 +344,9 @@ Esta phase e responsavel por 4 dos 5 gaps P1 da auditoria de 2026-06-17:
 - **P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados → Slice 6-A. `[RESOLVIDO 2026-06-17]`
 - **P1-2** — `RegisterProviderAccountHandler` usa tenant/application do body → Slice 6-B. `[RESOLVIDO 2026-06-18]`
 - **P1-3** — Endpoints de bootstrap/admin sem politica de autenticacao → Slice 6-D + ADR-0006. `[RESOLVIDO 2026-06-18 — Slice 6-D: IBootstrapPolicy + BootstrapOptions + DevelopmentDataSeeder]`
-- **P1-5** — `ApplicationClient.WebhookSecret` persistido em texto claro → Slice 6-C + ADR-0007.
+- **P1-5** — `ApplicationClient.WebhookSecret` persistido em texto claro → Slice 6-C + ADR-0007. `[RESOLVIDO 2026-06-25 — Slice 6-C: IWebhookSecretProtector + AesWebhookSecretProtector]`
 
-O gap P1-4 (`NoopApplicationWebhookDispatcher`) e de responsabilidade da Phase 7 (Slice 7-A), nao desta phase. No entanto, o Slice 6-C (protecao de `WebhookSecret`) e prerequisito para que o Slice 7-A possa ser validado de forma segura, pois o dispatcher HTTP usara o secret para assinar os webhooks internos.
+O gap P1-4 (`NoopApplicationWebhookDispatcher`) e de responsabilidade da Phase 7 (Slice 7-A), nao desta phase. A Slice 6-C (protecao de `WebhookSecret`) era prerequisito para que o Slice 7-A pudesse ser validado de forma segura, pois o dispatcher HTTP usara o secret para assinar os webhooks internos; esse prerequisito foi atendido em 2026-06-25.
 
 Ver `docs/audits/spec-adherence-audit-2026-06-17.md` para detalhes de cada achado.
 

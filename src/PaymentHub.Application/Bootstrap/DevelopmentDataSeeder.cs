@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PaymentHub.Application.Abstractions.Bootstrap;
 using PaymentHub.Application.Abstractions.Persistence;
+using PaymentHub.Application.Abstractions.Security;
 using PaymentHub.Domain.Entities;
 
 namespace PaymentHub.Application.Bootstrap;
@@ -15,6 +16,7 @@ public sealed class DevelopmentDataSeeder : IDevelopmentDataSeeder
     private readonly ITenantRepository _tenants;
     private readonly IApplicationClientRepository _applications;
     private readonly IUnitOfWork _uow;
+    private readonly IWebhookSecretProtector _webhookSecretProtector;
     private readonly ILogger<DevelopmentDataSeeder> _logger;
 
     public DevelopmentDataSeeder(
@@ -23,6 +25,7 @@ public sealed class DevelopmentDataSeeder : IDevelopmentDataSeeder
         ITenantRepository tenants,
         IApplicationClientRepository applications,
         IUnitOfWork uow,
+        IWebhookSecretProtector webhookSecretProtector,
         ILogger<DevelopmentDataSeeder> logger)
     {
         _policy = policy;
@@ -30,6 +33,7 @@ public sealed class DevelopmentDataSeeder : IDevelopmentDataSeeder
         _tenants = tenants;
         _applications = applications;
         _uow = uow;
+        _webhookSecretProtector = webhookSecretProtector;
         _logger = logger;
     }
 
@@ -91,16 +95,21 @@ public sealed class DevelopmentDataSeeder : IDevelopmentDataSeeder
         }
         else
         {
+            var protectedWebhookSecret = string.IsNullOrWhiteSpace(_options.DevelopmentWebhookSecret)
+                ? null
+                : _webhookSecretProtector.Protect(_options.DevelopmentWebhookSecret);
+
             var app = new ApplicationClient(
                 Guid.NewGuid(),
                 tenant.Id,
                 applicationName,
-                webhookUrl: null);
+                webhookUrl: null,
+                protectedWebhookSecret: protectedWebhookSecret);
             await _applications.AddAsync(app, cancellationToken);
             applicationCreated = true;
             _logger.LogInformation(
-                "Bootstrap: created dev application {ApplicationName} (id={ApplicationId}) under tenant {TenantId}.",
-                applicationName, app.Id, tenant.Id);
+                "Bootstrap: created dev application {ApplicationName} (id={ApplicationId}) under tenant {TenantId} (hasProtectedWebhook={HasProtectedWebhook}).",
+                applicationName, app.Id, tenant.Id, app.HasWebhookSecret);
         }
 
         if (tenantCreated || applicationCreated)

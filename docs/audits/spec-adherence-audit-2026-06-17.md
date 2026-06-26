@@ -4,7 +4,7 @@
 
 O `main` esta majoritariamente aderente ao desenho do MVP: checkout hospedado, multi-tenant por API Key, Postgres com Inbox/Outbox, status canonico, idempotencia de checkout, webhooks de provider persistidos antes do processamento e ausencia de campos de cartao/CVV no dominio principal.
 
-Nao foram identificados achados P0 comprovados nesta auditoria. Os principais riscos restantes sao P1: bootstrap/admin endpoints divergentes da documentacao (P1-3), worker de outbox registrado com dispatcher no-op (P1-4) e armazenamento do `webhook_secret` em texto claro (P1-5). O gap P1-1 (enforcement de status ativo de tenant/application) foi resolvido pelo Slice 6-A em 2026-06-17. O gap P1-2 (cadastro de provider account aceitando tenant/application do corpo em vez do contexto autenticado) foi resolvido pelo Slice 6-B em 2026-06-18.
+Nao foram identificados achados P0 comprovados nesta auditoria. Os principais riscos restantes sao P1: bootstrap/admin endpoints divergentes da documentacao (P1-3), worker de outbox registrado com dispatcher no-op (P1-4) e armazenamento do `webhook_secret` em texto claro (P1-5). O gap P1-1 (enforcement de status ativo de tenant/application) foi resolvido pelo Slice 6-A em 2026-06-17. O gap P1-2 (cadastro de provider account aceitando tenant/application do corpo em vez do contexto autenticado) foi resolvido pelo Slice 6-B em 2026-06-18. O gap P1-3 (politica de bootstrap/admin seed) foi resolvido pelo Slice 6-D em 2026-06-18. O gap P1-5 (protecao de `WebhookSecret` em repouso) foi resolvido pelo Slice 6-C em 2026-06-25: `IWebhookSecretProtector` + `AesWebhookSecretProtector` cifram o segredo antes de persistir e o DTO de resposta expoe apenas `hasWebhookSecret: bool`.
 
 Tambem ha gaps P2 relevantes em testes de integracao, validacao de assinatura de webhooks externos, audit logs de acoes administrativas e constraints relacionais no banco.
 
@@ -43,7 +43,7 @@ O repositorio implementa bem o fluxo essencial do MVP, mas ainda nao deve ser co
 | Providers | `006-provider-integration.md`, ADR-0005 | Router e adapters fake/Stripe/MercadoPago/AbacatePay skeleton | Testes do fake e mapper | ⚠️ Parcial | Credenciais sao criptografadas, mas providers reais ainda sao skeleton e assinatura externa nao e validada. |
 | Webhooks de provider | `007-webhook-processing.md` | Controller persiste inbox; worker processa e cria outbox | Testes unitarios do handler | ⚠️ Parcial | Deduplicacao existe; assinatura externa e teste e2e faltam. |
 | Banco | `010-database-contract.md`, ADR-0002 | Tabelas, indices e unique keys principais existem | Sem testes de integracao | ⚠️ Parcial | Poucas FKs no banco; projeto de integracao nao possui testes descobertos. |
-| Seguranca | `011-security-and-compliance.md` | API keys hashed; provider credentials protegidas por Data Protection | Testes parciais de middleware e signer | ⚠️ Parcial | `webhook_secret` fica em texto claro; falta validacao de assinatura de provider. |
+| Seguranca | `011-security-and-compliance.md` | API keys hashed; provider credentials protegidas por Data Protection; `WebhookSecret` agora cifrado via `IWebhookSecretProtector` | Testes parciais de middleware e signer | ⚠️ Parcial | Falta validacao de assinatura de provider. |
 | Observabilidade e auditoria | `012-observability-and-audit.md` | Health checks, logs basicos e entidade `AuditLog` | Sem testes especificos de audit log | ⚠️ Parcial | Repositorio de audit log existe, mas handlers administrativos nao gravam auditoria. |
 | Testes | `013-testing-strategy.md` | Suite unitaria ativa | `dotnet test` passa, mas IntegrationTests nao descobre testes | ⚠️ Parcial | Estrategia pede integracao DB/API/workers ainda ausente. |
 | Arquitetura | `overview.md`, `mvp-decisions.md` | Camadas separadas e Postgres Inbox/Outbox | Build/test validam compilacao | ⚠️ Parcial | Worker usa dispatcher no-op para outbox no host dedicado. |
@@ -80,10 +80,7 @@ Nenhum achado P0 comprovado nesta auditoria.
    - Evidencia: `PaymentHub.Worker` registra `NoopApplicationWebhookDispatcher`; `OutboxDispatcherWorker` marca evento como enviado apos o dispatcher retornar sucesso.
    - Risco: eventos internos podem ser considerados enviados sem entrega HTTP real quando o host worker e usado para processar outbox.
 
-5. `ApplicationClient.WebhookSecret` e persistido em texto claro.
-   - Specs: `011-security-and-compliance.md`, `012-observability-and-audit.md`.
-   - Evidencia: migracao cria coluna `application_clients.webhook_secret` como texto; nao foi encontrado mecanismo de protecao equivalente ao de provider credentials.
-   - Risco: vazamento de banco permite forjar webhooks internos assinados para aplicacoes clientes.
+5. ~~`ApplicationClient.WebhookSecret` e persistido em texto claro.~~ `[RESOLVIDO 2026-06-25 — Slice 6-C: IWebhookSecretProtector + AesWebhookSecretProtector cifram o segredo com AES-CBC; coluna agora armazena blob cifrado]`
 
 ### P2 - Médio
 
@@ -138,12 +135,13 @@ Nenhum achado P0 comprovado nesta auditoria.
 - Faltam testes API/e2e para checkout autenticado, replay de idempotency key, conflito de idempotencia, tenant/app inativo e provider indisponivel.
 - Faltam testes de worker para `WebhookProcessorWorker` e `OutboxDispatcherWorker` com banco real ou fixture de integracao.
 - ~~Faltam testes de autorizacao para impedir body tenant/application divergente do contexto autenticado.~~ `[RESOLVIDO 2026-06-18 — Slice 6-B: 15 testes unitarios cobrindo derivacao, body ignorado, contexto ausente, resposta sem credentials e regressao]`
+- ~~Faltam testes de webhook secret protection (raw nao persistido, raw nao logado, raw nao retornado, desprotegivel internamente).~~ `[RESOLVIDO 2026-06-25 — Slice 6-C: 11 testes do protector, 10 testes do handler, 3 testes do seeder, 3 testes do dispatcher]`
 - Faltam testes de audit log para acoes administrativas.
 - Faltam testes de assinatura invalida/ausente para webhooks de providers reais quando estes adapters forem ativados.
 
 ## Gaps de segurança
 
-- `webhook_secret` de application fica persistido sem protecao em repouso equivalente a provider credentials.
+- ~~`webhook_secret` de application fica persistido sem protecao em repouso equivalente a provider credentials.~~ `[RESOLVIDO 2026-06-25 — Slice 6-C: IWebhookSecretProtector + AesWebhookSecretProtector cifram o segredo com AES-CBC]`
 - Provider webhook signatures ainda nao sao validadas nos adapters reais.
 - ~~Cadastro de provider account nao vincula explicitamente o tenant/application do request ao contexto autenticado.~~ `[RESOLVIDO 2026-06-18 — Slice 6-B]`
 - ~~Status de tenant/application nao e enforceado em autenticacao/checkout.~~ `[RESOLVIDO 2026-06-17 — Slice 6-A]`

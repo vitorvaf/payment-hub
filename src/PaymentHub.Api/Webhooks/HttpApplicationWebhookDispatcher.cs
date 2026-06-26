@@ -16,6 +16,7 @@ public sealed class HttpApplicationWebhookDispatcher : IApplicationWebhookDispat
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IApplicationClientRepository _apps;
     private readonly IWebhookSigner _signer;
+    private readonly IWebhookSecretProtector _webhookSecretProtector;
     private readonly ILogger<HttpApplicationWebhookDispatcher> _logger;
     private readonly PaymentHubOptions _options;
 
@@ -23,12 +24,14 @@ public sealed class HttpApplicationWebhookDispatcher : IApplicationWebhookDispat
         IHttpClientFactory httpClientFactory,
         IApplicationClientRepository apps,
         IWebhookSigner signer,
+        IWebhookSecretProtector webhookSecretProtector,
         ILogger<HttpApplicationWebhookDispatcher> logger,
         IOptions<PaymentHubOptions> options)
     {
         _httpClientFactory = httpClientFactory;
         _apps = apps;
         _signer = signer;
+        _webhookSecretProtector = webhookSecretProtector;
         _logger = logger;
         _options = options.Value;
     }
@@ -45,9 +48,23 @@ public sealed class HttpApplicationWebhookDispatcher : IApplicationWebhookDispat
         }
 
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
-        var signature = string.IsNullOrWhiteSpace(app.WebhookSecret)
-            ? string.Empty
-            : _signer.Sign(outboxEvent.PayloadJson, app.WebhookSecret, timestamp);
+        var signature = string.Empty;
+        if (app.HasWebhookSecret)
+        {
+            string rawSecret;
+            try
+            {
+                rawSecret = _webhookSecretProtector.Unprotect(app.WebhookSecret!);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Skipping outbox event {OutboxEventId}: application {ApplicationId} has invalid protected webhook secret",
+                    outboxEvent.Id, app.Id);
+                return;
+            }
+            signature = _signer.Sign(outboxEvent.PayloadJson, rawSecret, timestamp);
+        }
 
         var client = _httpClientFactory.CreateClient("application-webhook");
         client.Timeout = TimeSpan.FromSeconds(_options.WebhookHttpTimeoutSeconds);

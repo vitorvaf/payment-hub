@@ -41,6 +41,7 @@ public static class PostgresServiceCollectionExtensions
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IApiKeyHasher, HmacApiKeyHasher>();
         services.AddSingleton<ICredentialProtector, AesCredentialProtector>();
+        services.AddSingleton<IWebhookSecretProtector, AesWebhookSecretProtector>();
         services.AddSingleton<IWebhookSigner, HmacWebhookSigner>();
         services.AddSingleton<IIdempotencyRequestHasher, Sha256IdempotencyRequestHasher>();
 

@@ -122,9 +122,214 @@ public class HttpApplicationWebhookDispatcherTests
         captured.Request.Should().BeNull("dispatcher must skip the HTTP request when secret cannot be unprotected");
     }
 
+    // =================================================================================================
+    // Slice 7-A.8 — strong coverage using ScriptedHandler. Covers HTTP 4xx/5xx, network/timeout
+    // errors, missing-webhook-url paths and the security invariants (no body / no URL leakage).
+    // =================================================================================================
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task DispatchAsync_ShouldThrowHttpFailureWithStatusCode_WhenConsumerReturnsNon2xx(HttpStatusCode statusCode)
+    {
+        var (dispatcher, _, _) = BuildDispatcher(_ => _
+            .Enqueue(statusCode));
+
+        var outbox = NewOutboxEvent("payment.approved");
+
+        var act = async () => await dispatcher.DispatchAsync(outbox, CancellationToken.None);
+        var assertion = await act.Should().ThrowAsync<WebhookDispatcherException>();
+        assertion.Which.Category.Should().Be(WebhookDispatcherCategory.HttpFailure);
+        assertion.Which.StatusCode.Should().Be((int)statusCode);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ShouldThrowNetworkError_WhenHttpRequestExceptionThrown()
+    {
+        var (dispatcher, _, _) = BuildDispatcher(handler =>
+            handler.EnqueueThrow(new HttpRequestException("connection refused")));
+
+        var outbox = NewOutboxEvent("payment.approved");
+
+        var act = async () => await dispatcher.DispatchAsync(outbox, CancellationToken.None);
+        var assertion = await act.Should().ThrowAsync<WebhookDispatcherException>();
+        assertion.Which.Category.Should().Be(WebhookDispatcherCategory.NetworkError);
+        assertion.Which.StatusCode.Should().BeNull();
+        assertion.Which.Message.Should().NotContain("connection refused",
+            "raw exception messages must never leak into typed exceptions");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ShouldThrowTimeout_WhenHandlerSimulatesHttpClientTimeout()
+    {
+        // HttpClient surfaces its Timeout as TaskCanceledException with no inner
+        // OperationCanceledException — mirror that here so the dispatcher's catch sees the same
+        // signal it would in production.
+        var (dispatcher, _, _) = BuildDispatcher(handler =>
+            handler.EnqueueThrow(new TaskCanceledException("HttpClient.Timeout fired")));
+
+        var outbox = NewOutboxEvent("payment.approved");
+
+        var act = async () => await dispatcher.DispatchAsync(outbox, CancellationToken.None);
+        var assertion = await act.Should().ThrowAsync<WebhookDispatcherException>();
+        assertion.Which.Category.Should().Be(WebhookDispatcherCategory.Timeout);
+        assertion.Which.StatusCode.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ShouldThrowMissingWebhookUrl_WhenApplicationNotFoundUnderTenant()
+    {
+        // Tenant guard (B1): an OutboxEvent referencing a (tenantId, applicationId) that the
+        // repository cannot resolve must NOT be silently dropped — the worker needs to know so
+        // it can retry or fail according to policy instead of marking the event as Sent.
+        var appsRepo = new Mock<IApplicationClientRepository>(MockBehavior.Strict);
+        appsRepo.Setup(r => r.GetByTenantAndIdAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApplicationClient?)null);
+
+        var handler = new ScriptedHandler(); // empty queue — must never be hit
+        var dispatcher = new HttpApplicationWebhookDispatcher(
+            new SingleHandlerHttpClientFactory(handler),
+            appsRepo.Object,
+            new PaymentHub.Infrastructure.Postgres.Security.HmacWebhookSigner(),
+            new FakeWebhookSecretProtector(),
+            NullLogger<HttpApplicationWebhookDispatcher>.Instance,
+            Options.Create(new PaymentHubOptions { WebhookHttpTimeoutSeconds = 10 }));
+
+        var outbox = NewOutboxEvent("payment.approved");
+
+        var act = async () => await dispatcher.DispatchAsync(outbox, CancellationToken.None);
+        var assertion = await act.Should().ThrowAsync<WebhookDispatcherException>();
+        assertion.Which.Category.Should().Be(WebhookDispatcherCategory.MissingWebhookUrl);
+        assertion.Which.StatusCode.Should().BeNull();
+        handler.Requests.Should().BeEmpty("dispatcher must NOT send HTTP when application is missing");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ShouldThrowMissingWebhookUrl_WhenWebhookUrlIsBlank()
+    {
+        var app = new ApplicationClient(
+            Guid.NewGuid(), Guid.NewGuid(), "TestApp",
+            webhookUrl: "   ", protectedWebhookSecret: null);
+
+        var appsRepo = new Mock<IApplicationClientRepository>(MockBehavior.Strict);
+        appsRepo.Setup(r => r.GetByTenantAndIdAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(app);
+
+        var handler = new ScriptedHandler();
+        var dispatcher = new HttpApplicationWebhookDispatcher(
+            new SingleHandlerHttpClientFactory(handler),
+            appsRepo.Object,
+            new PaymentHub.Infrastructure.Postgres.Security.HmacWebhookSigner(),
+            new FakeWebhookSecretProtector(),
+            NullLogger<HttpApplicationWebhookDispatcher>.Instance,
+            Options.Create(new PaymentHubOptions { WebhookHttpTimeoutSeconds = 10 }));
+
+        var outbox = NewOutboxEvent("payment.approved");
+
+        var act = async () => await dispatcher.DispatchAsync(outbox, CancellationToken.None);
+        var assertion = await act.Should().ThrowAsync<WebhookDispatcherException>();
+        assertion.Which.Category.Should().Be(WebhookDispatcherCategory.MissingWebhookUrl);
+        handler.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ShouldNotIncludeResponseBody_InExceptionMessage()
+    {
+        // M2-security: the consumer's response body is consumer-controlled and may contain
+        // sensitive material. The exception message MUST NOT contain it because the worker
+        // would otherwise persist it into OutboxEvent.LastError.
+        const string sensitiveBody = "{\"error\":\"internal\",\"stack\":\"secret-stack-trace\"}";
+
+        var (dispatcher, handler, _) = BuildDispatcher(h =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent(sensitiveBody, System.Text.Encoding.UTF8, "application/json")
+            };
+            h.Enqueue(_ => response);
+        });
+
+        var outbox = NewOutboxEvent("payment.approved");
+
+        var act = async () => await dispatcher.DispatchAsync(outbox, CancellationToken.None);
+        var assertion = await act.Should().ThrowAsync<WebhookDispatcherException>();
+        assertion.Which.Message.Should().NotContain(sensitiveBody);
+        assertion.Which.Message.Should().NotContain("secret-stack-trace");
+        // Ensure the consumer actually received the body we sent — if the test wires the wrong
+        // content, the assertion above would pass by accident.
+        handler.Requests.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ShouldIncludeAllPaymentHubHeaders_OnSuccess()
+    {
+        var app = new ApplicationClient(
+            Guid.NewGuid(), Guid.NewGuid(), "TestApp",
+            webhookUrl: "https://example.invalid/hook",
+            protectedWebhookSecret: new FakeWebhookSecretProtector().Protect("any-raw-secret"));
+
+        var outbox = NewOutboxEvent("payment.approved");
+
+        var appsRepo = new Mock<IApplicationClientRepository>(MockBehavior.Strict);
+        appsRepo.Setup(r => r.GetByTenantAndIdAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(app);
+
+        var handler = new ScriptedHandler().Enqueue(HttpStatusCode.OK);
+        var dispatcher = new HttpApplicationWebhookDispatcher(
+            new SingleHandlerHttpClientFactory(handler),
+            appsRepo.Object,
+            new PaymentHub.Infrastructure.Postgres.Security.HmacWebhookSigner(),
+            new FakeWebhookSecretProtector(),
+            NullLogger<HttpApplicationWebhookDispatcher>.Instance,
+            Options.Create(new PaymentHubOptions { WebhookHttpTimeoutSeconds = 10 }));
+
+        await dispatcher.DispatchAsync(outbox, CancellationToken.None);
+
+        var sent = handler.Requests.Should().ContainSingle().Subject;
+        sent.Headers.GetValues("X-PaymentHub-Event-Id").Single().Should().Be(outbox.Id.ToString());
+        sent.Headers.GetValues("X-PaymentHub-Event-Type").Single().Should().Be("payment.approved");
+        sent.Headers.GetValues("X-PaymentHub-Timestamp").Single().Should().NotBeNullOrEmpty();
+        sent.Headers.GetValues("X-PaymentHub-Signature").Single().Should().NotBeNullOrEmpty();
+        handler.CapturedBodies.Should().ContainSingle()
+            .Which.Should().Be(outbox.PayloadJson);
+    }
+
+    // --- helpers ---
+
+    private static OutboxEvent NewOutboxEvent(string eventType)
+        => new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), eventType, "{}");
+
+    private static (HttpApplicationWebhookDispatcher dispatcher, ScriptedHandler handler, Mock<IApplicationClientRepository> repo) BuildDispatcher(
+        Action<ScriptedHandler> configure)
+    {
+        var app = new ApplicationClient(
+            Guid.NewGuid(), Guid.NewGuid(), "TestApp",
+            webhookUrl: "https://example.invalid/hook",
+            protectedWebhookSecret: null);
+
+        var appsRepo = new Mock<IApplicationClientRepository>(MockBehavior.Strict);
+        appsRepo.Setup(r => r.GetByTenantAndIdAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(app);
+
+        var handler = new ScriptedHandler();
+        configure(handler);
+
+        var dispatcher = new HttpApplicationWebhookDispatcher(
+            new SingleHandlerHttpClientFactory(handler),
+            appsRepo.Object,
+            new PaymentHub.Infrastructure.Postgres.Security.HmacWebhookSigner(),
+            new FakeWebhookSecretProtector(),
+            NullLogger<HttpApplicationWebhookDispatcher>.Instance,
+            Options.Create(new PaymentHubOptions { WebhookHttpTimeoutSeconds = 10 }));
+
+        return (dispatcher, handler, appsRepo);
+    }
+
     private static HttpApplicationWebhookDispatcher CreateDispatcher(
         IApplicationClientRepository appsRepo,
-        CapturingHandler handler,
+        HttpMessageHandler handler,
         IWebhookSecretProtector protector)
     {
         var factory = new SingleHandlerHttpClientFactory(handler);

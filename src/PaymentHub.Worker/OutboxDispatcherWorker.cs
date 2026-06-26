@@ -107,6 +107,14 @@ public sealed class OutboxDispatcherWorker : BackgroundService
                 outbox.MarkSent();
                 await eventStore.SaveAsync(outbox, cancellationToken);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Slice 7-A.8: re-throw cancellation so ExecuteAsync can break its loop
+                // cleanly. Without this, OCE from DispatchAsync would fall through to the
+                // generic catch and be classified as UnexpectedDispatcherError, which would
+                // both silently swallow the cancel signal and pollute LastError.
+                throw;
+            }
             catch (WebhookDispatcherException wex)
             {
                 // Slice 7-A.7: only Category + StatusCode are persisted to LastError. The raw

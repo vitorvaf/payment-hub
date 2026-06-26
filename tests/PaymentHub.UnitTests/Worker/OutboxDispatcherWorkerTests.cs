@@ -358,6 +358,247 @@ public class OutboxDispatcherWorkerTests
         outbox.RetryCount.Should().Be(RetryPolicy.MaxAttempts);
     }
 
+    // =================================================================================================
+    // Slice 7-A.8 — strong coverage: batch semantics, cancellation, reprocess stability and
+    // LastError safety across the full worker surface.
+    // =================================================================================================
+
+    [Fact]
+    public async Task DispatchOnceAsync_ShouldProcessMixedBatch_WithSuccessAndDifferentFailureCategories()
+    {
+        // Arrange: 3 events with 3 different outcomes. Each must end in the correct status,
+        // each must keep its original Id (reprocess stability — C.1), and the dispatcher must be
+        // called exactly once per event regardless of prior failures (batch isolation — B.6.4).
+        var ok = NewOutboxEvent("payment.approved");
+        var httpFail = NewOutboxEvent("payment.approved");
+        var network = NewOutboxEvent("payment.approved");
+        var originalIds = new[] { ok.Id, httpFail.Id, network.Id };
+
+        var repository = new Mock<IOutboxRepository>();
+        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { ok, httpFail, network });
+
+        var eventStore = new Mock<IOutboxEventStore>();
+        eventStore.Setup(s => s.SaveAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = new Mock<IApplicationWebhookDispatcher>();
+        var callIndex = 0;
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
+            .Returns<OutboxEvent, CancellationToken>(async (e, ct) =>
+            {
+                callIndex++;
+                if (e.Id == httpFail.Id)
+                    throw new WebhookDispatcherException(
+                        WebhookDispatcherCategory.HttpFailure, 500,
+                        "Application webhook responded 500 (consumer returned non-success).");
+                if (e.Id == network.Id)
+                    throw new WebhookDispatcherException(
+                        WebhookDispatcherCategory.NetworkError,
+                        "Network error while dispatching webhook.");
+                await Task.CompletedTask; // success
+            });
+
+        var worker = BuildWorker(services => services
+            .AddSingleton(eventStore.Object)
+            .AddSingleton(dispatcher.Object)
+            .AddSingleton(repository.Object), batchSize: 10);
+
+        // Act
+        await worker.DispatchOnceAsync(CancellationToken.None);
+
+        // Assert: every event reached the dispatcher and ended up in its correct outcome.
+        callIndex.Should().Be(3, "all 3 events must reach the dispatcher");
+
+        ok.Status.Should().Be(OutboxEventStatus.Sent);
+        ok.SentAt.Should().NotBeNull();
+        ok.LastError.Should().BeNull();
+
+        httpFail.Status.Should().Be(OutboxEventStatus.Pending);
+        httpFail.RetryCount.Should().Be(1);
+        httpFail.LastError.Should().Be("HttpFailure: status=500");
+        httpFail.NextRetryAt.Should().NotBeNull();
+
+        network.Status.Should().Be(OutboxEventStatus.Pending);
+        network.RetryCount.Should().Be(1);
+        network.LastError.Should().Be("NetworkError");
+        network.NextRetryAt.Should().NotBeNull();
+
+        // Repprocess stability (C.1): the OutboxEvent.Id never changes across retry.
+        new[] { ok.Id, httpFail.Id, network.Id }.Should().Equal(originalIds);
+
+        // eventStore.SaveAsync called twice per event (MarkProcessing + final mark).
+        eventStore.Verify(s => s.SaveAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(6));
+    }
+
+    [Fact]
+    public async Task DispatchOnceAsync_ShouldPropagateCancellation_WhenDispatcherThrowsOperationCanceledException()
+    {
+        // Slice 7-A.8 fix: without the catch (OperationCanceledException) re-throw in the worker,
+        // an OCE from the dispatcher would fall through to the generic catch and be classified as
+        // UnexpectedDispatcherError, silently swallowing the cancel signal AND polluting LastError.
+        var outbox = NewOutboxEvent("payment.approved");
+
+        var repository = new Mock<IOutboxRepository>();
+        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { outbox });
+
+        var eventStore = new Mock<IOutboxEventStore>();
+        eventStore.Setup(s => s.SaveAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = new Mock<IApplicationWebhookDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
+            .Returns<OutboxEvent, CancellationToken>(async (_, ct) =>
+            {
+                await Task.Yield();
+                ct.ThrowIfCancellationRequested();
+            });
+
+        var worker = BuildWorker(services => services
+            .AddSingleton(eventStore.Object)
+            .AddSingleton(dispatcher.Object)
+            .AddSingleton(repository.Object), batchSize: 10);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Act + Assert: the OCE propagates out instead of being swallowed.
+        var act = async () => await worker.DispatchOnceAsync(cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // The event must NOT have been mis-classified as UnexpectedDispatcherError.
+        outbox.LastError.Should().BeNull("OCE must not be persisted as LastError");
+        outbox.Status.Should().NotBe(OutboxEventStatus.Failed);
+    }
+
+    [Fact]
+    public async Task DispatchOnceAsync_ShouldPreserveEventId_OnHttpFailureRetry()
+    {
+        // C.1 (qa-reviewer): eventId must be stable across retries so the worker can correlate
+        // the same logical delivery across attempts (OutboxEvent.Id is the only stable handle).
+        var outbox = NewOutboxEvent("payment.approved");
+        var originalId = outbox.Id;
+
+        var repository = new Mock<IOutboxRepository>();
+        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { outbox });
+
+        var eventStore = new Mock<IOutboxEventStore>();
+        eventStore.Setup(s => s.SaveAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = new Mock<IApplicationWebhookDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WebhookDispatcherException(
+                WebhookDispatcherCategory.HttpFailure, 503,
+                "Application webhook responded 503 (consumer returned non-success)."));
+
+        var worker = BuildWorker(services => services
+            .AddSingleton(eventStore.Object)
+            .AddSingleton(dispatcher.Object)
+            .AddSingleton(repository.Object), batchSize: 10);
+
+        // Act: run two iterations (each call represents an attempt).
+        await worker.DispatchOnceAsync(CancellationToken.None);
+        var afterFirstRetry = outbox.Id;
+        await worker.DispatchOnceAsync(CancellationToken.None);
+        var afterSecondRetry = outbox.Id;
+
+        // Assert
+        outbox.Id.Should().Be(originalId, "eventId must never change across retries");
+        afterFirstRetry.Should().Be(originalId);
+        afterSecondRetry.Should().Be(originalId);
+        outbox.RetryCount.Should().Be(2);
+        outbox.LastError.Should().Be("HttpFailure: status=503");
+    }
+
+    [Fact]
+    public async Task DispatchOnceAsync_ShouldNotIncludePayloadOrSecret_InLastError_OnHttpFailure()
+    {
+        // Belt-and-braces check on the worker side: even if the dispatcher's exception message
+        // leaked (regression), the entity would refuse to persist it. Verify the worker's path
+        // never touches ex.Message even when the payload + secret are in scope.
+        const string secret = "leaky-webhook-secret";
+        var outbox = new OutboxEvent(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            "payment.approved",
+            "{\"secret\":\"" + secret + "\",\"eventId\":\"00000000-0000-0000-0000-000000000001\"}");
+
+        var repository = new Mock<IOutboxRepository>();
+        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { outbox });
+
+        var eventStore = new Mock<IOutboxEventStore>();
+        eventStore.Setup(s => s.SaveAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = new Mock<IApplicationWebhookDispatcher>();
+        // Provide an exception message that simulates a hypothetical leak regression in the
+        // dispatcher — the worker must STILL not copy it into LastError.
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WebhookDispatcherException(
+                WebhookDispatcherCategory.HttpFailure, 500,
+                $"leaked body: {secret} and payload snippet: {outbox.PayloadJson[..40]}..."));
+
+        var worker = BuildWorker(services => services
+            .AddSingleton(eventStore.Object)
+            .AddSingleton(dispatcher.Object)
+            .AddSingleton(repository.Object), batchSize: 10);
+
+        // Act
+        await worker.DispatchOnceAsync(CancellationToken.None);
+
+        // Assert
+        outbox.LastError.Should().Be("HttpFailure: status=500");
+        outbox.LastError.Should().NotContain(secret);
+        outbox.LastError.Should().NotContain("leaked body");
+        outbox.LastError.Should().NotContain(outbox.PayloadJson);
+    }
+
+    [Fact]
+    public async Task DispatchOnceAsync_ShouldMarkFailedWithStatus_WhenRetriesExhausted_OnHttpFailure()
+    {
+        // Arrange: event already at MaxAttempts-1, then a final HTTP failure → terminal Failed
+        // with safe LastError including the status code.
+        var outbox = NewOutboxEvent("payment.approved");
+        for (int i = 0; i < RetryPolicy.MaxAttempts - 1; i++)
+        {
+            outbox.MarkRetryWithStatus(WebhookDispatcherCategory.HttpFailure, 429,
+                RetryPolicy.NextRetryAt(i + 1, FixedNow)!.Value);
+        }
+        outbox.RetryCount.Should().Be(RetryPolicy.MaxAttempts - 1);
+
+        var repository = new Mock<IOutboxRepository>();
+        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { outbox });
+
+        var eventStore = new Mock<IOutboxEventStore>();
+        eventStore.Setup(s => s.SaveAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = new Mock<IApplicationWebhookDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WebhookDispatcherException(
+                WebhookDispatcherCategory.HttpFailure, 429,
+                "Application webhook responded 429 (consumer returned non-success)."));
+
+        var worker = BuildWorker(services => services
+            .AddSingleton(eventStore.Object)
+            .AddSingleton(dispatcher.Object)
+            .AddSingleton(repository.Object), batchSize: 10);
+
+        // Act
+        await worker.DispatchOnceAsync(CancellationToken.None);
+
+        // Assert: terminal Failed with safe LastError.
+        outbox.Status.Should().Be(OutboxEventStatus.Failed);
+        outbox.LastError.Should().Be("HttpFailure: status=429");
+        outbox.NextRetryAt.Should().BeNull();
+        outbox.RetryCount.Should().Be(RetryPolicy.MaxAttempts);
+    }
+
     // --- helpers ---
 
     private static OutboxEvent NewOutboxEvent(string eventType)

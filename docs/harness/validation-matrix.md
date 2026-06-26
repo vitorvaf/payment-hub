@@ -52,8 +52,8 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | Phase | Slice | Tipo | Comando ou Acao | Resultado esperado | Resultado real | Status | Data |
 |-------|-------|------|-----------------|--------------------|---------------|--------|------|
 | 3 | Webhook | Unit | `dotnet test --filter ProcessWebhookEventHandlerTests` | Todos passando | 9 passando | `PASS` | 2026-06-17 |
-| 3 | Outbox | Unit | Dispatcher HTTP real registrado | Worker entrega HTTP sem noop | `PENDING` | `PENDING` | — |
-| 3 | Workers | Integration | Workers com banco real | Inbox e Outbox processados | `PENDING` | `PENDING` | — |
+| 3 | Outbox | Unit | Dispatcher HTTP real registrado | Worker entrega HTTP sem noop | `HttpApplicationWebhookDispatcher` realocado para `Infrastructure.Postgres/Webhooks/`; DI centralizado em `AddPaymentHubPostgres`; `IHttpClientFactory` nomeado | `PASS` | 2026-06-26 (Slice 7-A.1/.2/.3) |
+| 3 | Workers | Integration | Workers com banco real | Inbox e Outbox processados | `PENDING` | `PENDING` | — (Slice 1-IT) |
 
 ---
 
@@ -122,10 +122,23 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 
 | Phase | Slice | Tipo | Comando ou Acao | Resultado esperado | Resultado real | Status | Data |
 |-------|-------|------|-----------------|--------------------|---------------|--------|------|
-| 7 | 7-A | Unit | Dispatcher HTTP real envia POST para webhook URL | 2xx marca OutboxEvent como Sent | `PENDING` | `PENDING` | — |
-| 7 | 7-A | Unit | Dispatcher HTTP nao-2xx gera retry | RetryPolicy aplicada | `PENDING` | `PENDING` | — |
-| 7 | Workers | Integration | `OutboxDispatcherWorker` com banco real | OutboxEvent marcado como Sent apos HTTP 200 | `PENDING` | `PENDING` | — |
-| 7 | Workers | Integration | `WebhookProcessorWorker` com banco real | WebhookEvent processado e OutboxEvent criado | `PENDING` | `PENDING` | — |
+| 7 | 7-A | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | `dotnet test PaymentHub.slnx` | >= 200 testes sem regressao | 281 testes passando | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | Dispatcher HTTP real envia POST para webhook URL | 2xx marca OutboxEvent como Sent | `HttpApplicationWebhookDispatcher.DispatchAsync` chama `_apps.GetByTenantAndIdAsync(...)`; 2xx -> `MarkSent`; coberto por `HttpApplicationWebhookDispatcherTests` | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | Dispatcher HTTP nao-2xx gera retry | RetryPolicy aplicada | `LastError = WebhookDispatcherCategory.HttpFailure + statusCode`; `MarkRetryWithStatus`; coberto por testes | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | Dispatcher aborta HTTP quando `Unprotect` falha | `LastError = UnprotectFailure`; nenhum request enviado | Coberto por `OutboxDispatcherWorkerWithRealDispatcherTests` | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | Dispatcher marca Failed sem retry quando `WebhookUrl` ausente | `MissingWebhookUrl`; sem retry | Coberto por testes | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | `OutboxEvent.LastError` nao persiste `ex.Message`/body HTTP | Apenas `(category, statusCode)` em `LastError` | Coberto por testes; `MarkRetryWithStatus` e `MarkFailedWithStatus` sao os unicos metodos publicos | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | `OutboxDispatcherWorker` usa `IOutboxRepository` + `IOutboxEventStore` + `IClock` | Nao acessa `DbContext` direto; `DateTime.UtcNow` removido | Coberto por `OutboxDispatcherWorkerWithRealDispatcherTests` | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | `RegisterApplicationClientValidator` rejeita `WebhookUrl` nao-HTTPS / loopback / RFC1918 / link-local / IMDS | Cobertura completa de vetores SSRF | `WebhookUrlValidatorTests` (66+ casos) + `RegisterApplicationClientValidatorTests` (17 testes) | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | Worker falha no startup se `PaymentHub:WebhookSecretEncryptionKey` ausente | `InvalidOperationException` no startup | Fail-fast em `Worker/Program.cs:53-56` em scope anonimo | `PASS` | 2026-06-26 |
+| 7 | 7-A | Architecture | `scripts/agent-architecture-check.sh` | Worker nao depende de Api | Passed | `PASS` | 2026-06-26 |
+| 7 | 7-A | Docs | `docs/adr/ADR-0007-webhook-secret-protection.md` + `docs/adr/ADR-0010-real-outbox-dispatcher-location.md` | ADRs `ACCEPTED` + indice atualizado | Criados e indexados | `PASS` | 2026-06-26 |
+| 7 | 7-A | Docs | `docs/roadmap/000-payment-hub-roadmap.md` | P1-4 marcado como resolvido | Resolvido | `PASS` | 2026-06-26 |
+| 7 | 7-A | Docs | `docs/roadmap/002-phase-status-board.md` | Phase 7 com 0 gaps P1 proprios | 0 gaps P1 proprios | `PASS` | 2026-06-26 |
+| 7 | 7-A | Docs | `feature_list.md` PH-WORKER-001 | Concluido | Concluido | `PASS` | 2026-06-26 |
+| 7 | Workers | Integration | `OutboxDispatcherWorker` com banco real | OutboxEvent marcado como Sent apos HTTP 200 | `PENDING` | `PENDING` | — (Slice 1-IT) |
+| 7 | Workers | Integration | `WebhookProcessorWorker` com banco real | WebhookEvent processado e OutboxEvent criado | `PENDING` | `PENDING` | — (Slice 1-IT) |
 
 ---
 

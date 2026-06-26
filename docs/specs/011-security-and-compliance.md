@@ -161,6 +161,83 @@ Implementacao:
 - Cobertura de testes: `WebhookUrlValidatorTests` (66 casos expandidos de Theory) e `RegisterApplicationClientValidatorTests` (17 testes). Total adicionado pelo Slice 7-A.5: 80+ testes.
 - Cobre todos os vetores de SSRF mapeados em auditoria M3 (Worker chama `HttpApplicationWebhookDispatcher.DispatchAsync(outboxEvent)` → `client.WebhookUrl` → HTTP POST; qualquer URL privada seria um SSRF direto).
 
+### Dispatcher HTTP real do Outbox (Slice 7-A)
+
+O Worker dispara webhooks internos para a `WebhookUrl` da `ApplicationClient` apos persistir um `OutboxEvent`. Antes do Slice 7-A, o Worker usava um `NoopApplicationWebhookDispatcher` que marcava eventos como `Sent` sem envio HTTP real (gap P1-4). O dispatcher HTTP real introduzido pelo Slice 7-A tem as seguintes garantias de seguranca:
+
+#### Localizacao e dependencia
+
+- `HttpApplicationWebhookDispatcher` vive em `src/PaymentHub.Infrastructure.Postgres/Webhooks/`. Nao depende de `PaymentHub.Api`. Validado por `scripts/agent-architecture-check.sh` (Worker continua sem depender de Api).
+- DI centralizado em `AddPaymentHubPostgres` (registro `Scoped`). Nao ha registro duplicado na API nem no Worker.
+- `HttpClient` obtido via `IHttpClientFactory.CreateClient("application-webhook")` (registrado em `AddPaymentHubPostgres`).
+
+#### Tenant guard
+
+- O dispatcher busca o `ApplicationClient` via `_apps.GetByTenantAndIdAsync(outboxEvent.TenantId, outboxEvent.ApplicationId, ct)`. Em miss, loga warning com `tenantId`/`applicationId`/`outboxEventId` e retorna sem lancar. Tenant guard explicito impede que um `applicationId` ambiguo (ou atacante) leve o dispatcher a entregar webhook em application de outro tenant.
+- Erro e registrado como retry com `WebhookDispatcherCategory.UnexpectedDispatcherError` (ou categoria dedicada, conforme evolucao).
+
+#### `LastError` seguro (politica)
+
+`OutboxEvent.LastError` armazena apenas:
+
+- `WebhookDispatcherCategory` (enum de 7 valores: `HttpFailure`, `NetworkError`, `Timeout`, `UnprotectFailure`, `MissingWebhookUrl`, `MissingWebhookSecret`, `UnexpectedDispatcherError`).
+- `int?` (HTTP status code, quando aplicavel).
+
+**Nao** armazena:
+
+- `ex.Message` (pode conter body HTTP retornado pelo consumer, com dados de pagamento ou query strings com credenciais).
+- `ex.StackTrace` (caminhos internos, versao de runtime).
+- URL com credenciais em query string (consumidor malicioso pode forcar sua inclusao em `Exception.Message`).
+- Segredo raw ou protegido do consumer.
+
+Metodos publicos: `OutboxEvent.MarkRetryWithStatus(WebhookDispatcherCategory, int statusCode, DateTime nextRetryAt)` e `OutboxEvent.MarkFailedWithStatus(WebhookDispatcherCategory, int statusCode)`. Worker usa **apenas** esses metodos. Logs do Worker podem carregar a mensagem completa para debugging, mas ela nunca chega ao banco.
+
+Categorias e semantica:
+
+| Categoria | Quando dispara | `StatusCode` obrigatorio | Retry? |
+|-----------|----------------|---------------------------|--------|
+| `HttpFailure` (1) | Consumer retornou nao-2xx | sim | sim |
+| `NetworkError` (2) | DNS, conexao reset, TLS handshake | nao | sim |
+| `Timeout` (3) | `HttpClient` excedeu `WebhookHttpTimeoutSeconds` | nao | sim |
+| `UnprotectFailure` (4) | `IWebhookSecretProtector.Unprotect` falhou | nao | sim |
+| `MissingWebhookUrl` (5) | Application sem `WebhookUrl` | nao | nao (Failed direto) |
+| `MissingWebhookSecret` (6) | Reservado (nao deve ocorrer no codigo atual) | nao | depende |
+| `UnexpectedDispatcherError` (7) | Excecao nao esperada | nao | sim |
+
+#### Comportamento `UnprotectFailure`
+
+Quando `IWebhookSecretProtector.Unprotect` falha (chave divergente entre API e Worker, blob corrompido, prefixo invalido), o dispatcher **nao** envia HTTP request. Marca o evento como retry com `UnprotectFailure`. Preferencia explicita por "abortar cedo" em vez de "enviar sem assinatura".
+
+#### Comportamento `MissingWebhookUrl`
+
+Application sem `WebhookUrl` configurada (ou seja, foi registrada com `WebhookUrl=null`) e marcada como `Failed` direto, sem retry — o endereco nao vai aparecer magicamente. A categoria e `MissingWebhookUrl`.
+
+#### Validacao de `WebhookUrl` em camadas
+
+Toda escrita de `WebhookUrl` passa por `RegisterApplicationClientValidator` (HTTPS/SSRF, vide secao anterior). O dispatcher confia que `ApplicationClient.WebhookUrl` foi validado na entrada; o dispatcher nao re-valida (reduz duplicacao, e o `OutboxEvent` ja persiste `ApplicationId` + `TenantId` garantindo que vem de fonte ja validada).
+
+#### Fail-fast de `IWebhookSecretProtector` no Worker
+
+`src/PaymentHub.Worker/Program.cs` resolve `IWebhookSecretProtector` em um scope anonimo antes de `host.Run()`. Se `PaymentHub:WebhookSecretEncryptionKey` estiver ausente, o startup falha com `InvalidOperationException("PaymentHub:WebhookSecretEncryptionKey is required.")` capturada pelo `try/catch` externo. Isso reduz MTTR em deploys com configuracao errada — sem o fail-fast, o Worker subiria normalmente e so falharia no primeiro dispatch.
+
+#### HMAC de webhook interno
+
+Mantido conforme contrato existente (vide secao "HMAC de webhook interno" acima). O dispatcher HTTP real usa o mesmo `HmacWebhookSigner` ja documentado; a unica diferenca e que o segredo agora vem via `IWebhookSecretProtector.Unprotect` em vez de `ApplicationClient.WebhookSecret` raw (vide `docs/adr/ADR-0007-webhook-secret-protection.md`).
+
+#### Segredos, logs e respostas
+
+- Segredo raw nunca aparece em logs, respostas HTTP, DTOs ou `OutboxEvent.LastError`.
+- Segredo protegido nao aparece em logs (unica excecao: flag `hasProtectedWebhook={bool}` no seeder).
+- `LastError` nao contem body HTTP, query strings, stack traces ou secrets.
+- `WebhookUrl` validada por HTTPS/SSRF antes de qualquer persistencia (vide `docs/adr/ADR-0010-real-outbox-dispatcher-location.md`).
+
+#### Gaps conhecidos (deferidos)
+
+- Sweep automatico de eventos `Processing` orfaos (recovery apos crash do Worker). Multi-instancia nao e problema no MVP single-instance.
+- Concorrencia multi-instancia via `FOR UPDATE SKIP LOCKED` (Phase 7 multi-instance, fora do MVP).
+- Headers adicionais B4-security (`X-PaymentHub-Tenant` / `X-PaymentHub-Application`) — deferred; HMAC ja garante autenticidade.
+- API `appsettings.json` ainda sem placeholder `PaymentHub` (paridade com Worker).
+
 ## Criterios de aceite
 
 - Revisao de seguranca nao encontra secrets reais em repo.

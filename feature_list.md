@@ -13,8 +13,8 @@ Backlog leve para agentes. Use para registrar itens que nao serao implementados 
 | AI-007 | Auditoria | Rodar proxima auditoria specs versus codigo | Concluido | `docs/audits/spec-adherence-refresh-2026-06-24.md` | Auditoria curta executada sem corrigir produto; gaps viraram backlog. |
 | AI-008 | Segurança | Avaliar secret scanning dedicado no CI | Aberto | `docs/specs/011-security-and-compliance.md` | Considerar Gitleaks ou ferramenta equivalente alem do scan simples atual. |
 | AI-009 | Harness | Evoluir OpenCode com agentes, skills e checks locais | Concluido | `docs/harness/opencode.md` | `opencode.json` usa `agent`, skills locais, permissao segura e scripts docs/architecture/smoke. |
-| PH-SEC-001 | Segurança | Proteger `ApplicationClient.WebhookSecret` em repouso | Aberto | `docs/specs/011-security-and-compliance.md` | Gap P1; decidir ADR-0007 e implementar protecao. |
-| PH-WORKER-001 | Worker | Substituir dispatcher no-op do Outbox worker | Aberto | `docs/specs/007-inbox-outbox-workers.md` | Gap P1; evitar marcar envio sem dispatch HTTP real. |
+| PH-SEC-001 | Segurança | Proteger `ApplicationClient.WebhookSecret` em repouso | Concluido | `docs/specs/011-security-and-compliance.md` / `docs/adr/ADR-0007-webhook-secret-protection.md` | Slices 6-C (2026-06-25) + 7-A.6 (2026-06-26) + 7-A.9 (2026-06-26). |
+| PH-WORKER-001 | Worker | Substituir dispatcher no-op do Outbox worker | Concluido | `docs/specs/007-inbox-outbox-workers.md` / `docs/adr/ADR-0010-real-outbox-dispatcher-location.md` | Slice 7-A (2026-06-26, sub-slices 7-A.1 a 7-A.9). |
 | PH-SEC-002 | Segurança | Validar assinatura de webhooks externos reais | Aberto | `docs/specs/006-provider-webhooks.md` | Necessario antes de ativar providers reais fora de sandbox. |
 | PH-AUD-001 | Auditoria | Gravar `AuditLog` em acoes administrativas | Aberto | `docs/specs/012-observability-and-audit.md` | Criacao/alteracao de tenants, applications e provider accounts. |
 | PH-DB-001 | Banco | Decidir FKs obrigatorias versus referencias logicas | Aberto | `docs/specs/010-database-contract.md` | Atualizar spec/ADR antes de migrations. |

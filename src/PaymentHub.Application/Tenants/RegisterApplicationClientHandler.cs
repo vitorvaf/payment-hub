@@ -1,8 +1,10 @@
 using System.Security.Cryptography;
 using FluentValidation;
+using PaymentHub.Application.Abstractions.Context;
 using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Abstractions.Security;
 using PaymentHub.Application.Tenants.Dtos;
+using PaymentHub.Application.Tenants.Validation;
 using PaymentHub.Domain.Entities;
 
 namespace PaymentHub.Application.Tenants;
@@ -94,11 +96,15 @@ public sealed class RegisterApplicationClientHandler : IRegisterApplicationClien
 
 public sealed class RegisterApplicationClientValidator : AbstractValidator<RegisterApplicationClientRequestDto>
 {
-    public RegisterApplicationClientValidator()
+    public RegisterApplicationClientValidator(IRuntimeEnvironment environment)
     {
         RuleFor(x => x.TenantId).NotEmpty();
         RuleFor(x => x.Name).NotEmpty().MaximumLength(200);
-        RuleFor(x => x.WebhookUrl).MaximumLength(2000).When(x => !string.IsNullOrWhiteSpace(x.WebhookUrl));
+        RuleFor(x => x.WebhookUrl)
+            .MaximumLength(2000)
+            .Must((req, url) => WebhookUrlValidator.IsAllowed(url, environment.IsDevelopment, out _))
+            .When(x => !string.IsNullOrWhiteSpace(x.WebhookUrl))
+            .WithMessage("WebhookUrl must be an absolute HTTPS URL pointing to a public endpoint.");
         RuleFor(x => x.WebhookSecret).MaximumLength(2000).When(x => !string.IsNullOrWhiteSpace(x.WebhookSecret));
     }
 }

@@ -35,9 +35,123 @@ Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e v
 - Riscos ja documentados: ordem dos sub-slices exige atencao (D1 architect); testes de Worker exigem `IOutboxEventStore` + `IClock`; `NoopApplicationWebhookDispatcher` precisa ser **completamente** removido (classe + registro); garantir chave `WebhookSecretEncryptionKey` identica entre API e Worker em producao (chave compartilhada e documentada em ADR-0010).
 - Proxima acao (implementer): executar 7-A.1 → 7-A.9 na ordem indicada; rodar validacoes; criar `docs/audits/slice-7a-real-outbox-dispatcher-report-2026-06-26.md` com decisoes, achados aceitos/deferidos, validacoes executadas e gaps remanescentes; mover esta entrada para `## Historico` ao concluir.
 
+### Slice 7-A.5 — Planner contract (HTTPS/SSRF no `WebhookUrl` validator)
+
+- Data: 2026-06-26
+- Agente/superficie: OpenCode (Planner)
+- Status: **Concluido em 2026-06-26** (Implementer + validacoes finais). Relatorio em `docs/audits/slice-7a5-webhook-url-ssrf-report-2026-06-26.md`.
+- Resumo da implementacao: helper puro `internal static class WebhookUrlValidator` em `src/PaymentHub.Application/Tenants/Validation/WebhookUrlValidator.cs` (~200 linhas) com `public static bool IsAllowed(string? value, bool isDevelopment, out string? reason)`. `RegisterApplicationClientValidator` recebe `IRuntimeEnvironment environment` por injecao de construtor e adiciona `RuleFor(x => x.WebhookUrl).Must((req, url) => WebhookUrlValidator.IsAllowed(url, environment.IsDevelopment, out _)).When(x => !string.IsNullOrWhiteSpace(x.WebhookUrl)).WithMessage("WebhookUrl must be an absolute HTTPS URL pointing to a public endpoint.")`. `<InternalsVisibleTo Include="PaymentHub.UnitTests" />` adicionado em `PaymentHub.Application.csproj` (padrao ja existente em `PaymentHub.Worker.csproj:11`).
+- Q1 respondida: `AddValidatorsFromAssemblyContaining<RegisterTenantValidator>()` em `Program.cs:81` resolve o construtor de `RegisterApplicationClientValidator` via DI automaticamente; `IRuntimeEnvironment` ja esta registrado como Singleton em `Program.cs:66`, entao nenhum fallback em `HandleAsync` foi necessario.
+- Validacoes executadas: `dotnet restore`, `dotnet build` (0 errors/0 warnings em 9 projetos), `dotnet test` (**281 tests passed**, baseline 178 + 103 casos expandidos), `dotnet test --filter WebhookUrl` (69 passed), `dotnet test --filter RegisterApplicationClient` (50 passed), `dotnet test --filter ApplicationWebhook` (13 passed, sem regressao), `dotnet test --filter OutboxDispatcherWorker` (17 passed, sem regressao), `scripts/agent-architecture-check.sh` (passed), `git diff --check` (passed).
+- Arquivos criados (3): `src/PaymentHub.Application/Tenants/Validation/WebhookUrlValidator.cs`, `tests/PaymentHub.UnitTests/Application/Validation/WebhookUrlValidatorTests.cs` (~30 metodos, 66+ casos), `tests/PaymentHub.UnitTests/Application/RegisterApplicationClientValidatorTests.cs` (17 testes), `docs/audits/slice-7a5-webhook-url-ssrf-report-2026-06-26.md`.
+- Arquivos alterados (3): `src/PaymentHub.Application/Tenants/RegisterApplicationClientHandler.cs` (validator ctor + Must rule), `src/PaymentHub.Application/PaymentHub.Application.csproj` (InternalsVisibleTo), `docs/specs/011-security-and-compliance.md` (nova secao `### Protecao SSRF em ApplicationClient.WebhookUrl` + 6 bullets em `## Testes esperados`).
+- Constraint respeitada: dispatcher (`HttpApplicationWebhookDispatcher.cs`), worker (`OutboxDispatcherWorker.cs` + `Program.cs`), outbox (`OutboxEvent`), `PostgresServiceCollectionExtensions`, `Worker/appsettings.json` e ADRs **nao foram tocados** neste slice.
+- Proxima acao: implementar **7-A.6** em slice separado.
+- Escopo desta entrega (unico slice, **nao dividir**): adicionar validacao HTTPS/SSRF para `WebhookUrl` no fluxo de registro de `ApplicationClient`. **Nao** altera dispatcher HTTP, **nao** altera worker/outbox, **nao** altera politica de `LastError`, **nao** implementa provider real/painel admin/mensageria externa/rotacao de secret/retry/backoff/contrato de API Key.
+- Pre-condicoes verificadas:
+  - Sub-slices 7-A.1, 7-A.2, 7-A.3, 7-A.4, 7-A.7, 7-A.8 ja concluidos (vide `git log --oneline | head -3`).
+  - `HttpApplicationWebhookDispatcher` realocado em `src/PaymentHub.Infrastructure.Postgres/Webhooks/HttpApplicationWebhookDispatcher.cs` (post-7-A.2).
+  - `IRuntimeEnvironment` (Application) ja existe em `src/PaymentHub.Application/Abstractions/Context/IRuntimeEnvironment.cs:3-6` e ja e injetado em `CreateCheckoutHandler` (`src/PaymentHub.Application/Checkouts/CreateCheckoutHandler.cs:38,51`). Implementacao `HostRuntimeEnvironment` registrada como Singleton em `src/PaymentHub.Api/Program.cs:66`.
+  - FluentValidation auto-wired em `src/PaymentHub.Api/Program.cs:81` via `AddValidatorsFromAssemblyContaining<RegisterTenantValidator>()`.
+  - Validator atual: `RegisterApplicationClientValidator` em `src/PaymentHub.Application/Tenants/RegisterApplicationClientHandler.cs:95-103` — apenas `MaximumLength(2000)` em `WebhookUrl`, **sem** checagem de scheme/host. **Esta e a lacuna de seguranca M3.**
+- Discovery (7-A.5):
+  - `RegisterApplicationClientHandler.HandleAsync` instancia `new ApplicationClient(..., request.WebhookUrl, protectedWebhookSecret)` em `RegisterApplicationClientHandler.cs:51-56`. Nenhum check antes. A entidade (`src/PaymentHub.Domain/Entities/ApplicationClient.cs:42`) apenas faz `Trim()` e armazena.
+  - DTO `RegisterApplicationClientRequestDto` em `src/PaymentHub.Application/Tenants/Dtos.cs:9-14` expoe `string? WebhookUrl`.
+  - Testes existentes em `tests/PaymentHub.UnitTests/Application/RegisterApplicationClientHandlerTests.cs` (209 linhas, 10 testes) cobrem apenas `WebhookSecret` (raw-nao-persistido, raw-nao-logado, raw-nao-retornado, normalizacao de whitespace, tenant-inexistente-lanca). **Nenhum teste de URL.**
+  - `IRuntimeEnvironment` ja e mockado em `tests/PaymentHub.UnitTests/Application/CreateCheckoutHandlerTests.cs:26,42` — padrao a seguir.
+  - `scripts/agent-architecture-check.sh` (80 linhas) ja garante: Application **nao** referencia Infrastructure/Api/Worker; Worker **nao** referencia Api; Infrastructure **nao** referencia Api/Worker. Qualquer helper novo em `Application/Tenants/Validation/` ja atende.
+- Estrategia implementada (decidida pelo Planner):
+  1. **Helper puro** `internal static class WebhookUrlValidator` em `src/PaymentHub.Application/Tenants/Validation/WebhookUrlValidator.cs` com assinatura `public static bool IsAllowed(string? value, bool isDevelopment, out string? reason)`. Sem dependencia de DI, sem logging, sem excecoes. Cobrir: `Uri.TryCreate(UriKind.Absolute)`; `Scheme == Uri.UriSchemeHttps` (ou `http` apenas em Development **e** apenas para hosts loopback); se `IPAddress.TryParse(uri.Host)` → bloquear loopback (`127.0.0.0/8`, `::1`), RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local / IMDS (`169.254.0.0/16`, `fe80::/10`), unspecified (`0.0.0.0`, `::`), multicast, broadcast, IPv6 mapped IPv4 loopback (`::ffff:127.0.0.1` via `IPAddress.MapToIPv4()`); se host textual → bloquear `localhost` e `*.localhost`; opcionalmente bloquear `.local` / `*.local` (documentado).
+  2. **Validator FluentValidation** em `src/PaymentHub.Application/Tenants/RegisterApplicationClientHandler.cs`: ctor do `RegisterApplicationClientValidator` ganha parametro `IRuntimeEnvironment` (mantem escopo estavel — mesmo tempo de vida dos demais validators do assembly). Regra nova:
+     ```csharp
+     RuleFor(x => x.WebhookUrl)
+         .Must((req, url) => WebhookUrlValidator.IsAllowed(url, _env.IsDevelopment, out _))
+         .When(x => !string.IsNullOrWhiteSpace(x.WebhookUrl))
+         .WithMessage("WebhookUrl must be an absolute HTTPS URL pointing to a public endpoint.");
+     ```
+     Manter `MaximumLength(2000)` existente.
+  3. **Q1 em aberto para Implementer/security-reviewer**: `AddValidatorsFromAssemblyContaining` resolve ctor com parametros via `IValidatorFactory`? Padrao do projeto: validators com ctor vazio em `RegisterProviderAccountValidator`, `RegisterTenantValidator`. **Mitigacao**: se DI falhar no startup do teste, fallback e chamar `WebhookUrlValidator.IsAllowed(...)` diretamente dentro do `HandleAsync` (ou em um `IWebhookUrlPolicy` injetado no handler). Esta decisao **nao muda** o helper nem os testes.
+  4. **Spec 011 atualizada** com secao nova `## ApplicationClient WebhookUrl SSRF protection` contendo as 5 bullets do briefing.
+- Arquivos a criar (3):
+  - `src/PaymentHub.Application/Tenants/Validation/WebhookUrlValidator.cs` (~80 linhas, helper puro com `internal static`).
+  - `tests/PaymentHub.UnitTests/Application/Validation/WebhookUrlValidatorTests.cs` (~20 testes cobrindo os 19+ cenarios do briefing: URLs validas, scheme invalido, localhost/loopback IPv4+IPv6, RFC1918 tres blocos, link-local/IMDS, unspecified/wildcard, excecao Development).
+  - `docs/audits/slice-7a5-webhook-url-ssrf-report-2026-06-26.md` (relatorio final).
+- Arquivos a alterar (3):
+  - `src/PaymentHub.Application/Tenants/RegisterApplicationClientHandler.cs` — `RegisterApplicationClientValidator` ganha ctor com `IRuntimeEnvironment` + regra `Must(...)`.
+  - `tests/PaymentHub.UnitTests/Application/RegisterApplicationClientHandlerTests.cs` — adicionar `Mock<IRuntimeEnvironment>` (default `IsDevelopment = false`), atualizar `CreateHandler()` para incluir validator com env, adicionar ~6 testes de handler (rejeita/receita na borda, ambiente Development aceita HTTP local).
+  - `docs/specs/011-security-and-compliance.md` — adicionar secao `## ApplicationClient WebhookUrl SSRF protection` antes de `## Criterios de aceite`.
+- Arquivos a **nao** alterar (constraint explicita do briefing):
+  - `src/PaymentHub.Infrastructure.Postgres/Webhooks/HttpApplicationWebhookDispatcher.cs` (dispatcher intocado).
+  - `src/PaymentHub.Worker/OutboxDispatcherWorker.cs` e `src/PaymentHub.Worker/Program.cs`.
+  - `src/PaymentHub.Domain/Entities/OutboxEvent.cs` (politica de `LastError` preservada).
+  - `src/PaymentHub.Infrastructure.Postgres/PostgresServiceCollectionExtensions.cs` (DI nao muda).
+  - `src/PaymentHub.Worker/appsettings.json` (e 7-A.6).
+  - ADRs (e 7-A.9).
+- Casos de teste minimos (mapa briefing → testes):
+  - **Validos**: `https://example.com/webhook`, `https://hooks.example.com/payment-hub`.
+  - **Formato/scheme invalido**: `not-a-url`, `/relative/webhook`, `ftp://example.com/webhook`, `file:///etc/passwd`, `http://example.com/webhook` (fora de Development).
+  - **Localhost/loopback**: `https://localhost/webhook`, `https://127.0.0.1/webhook`, `https://127.10.20.30/webhook`, `https://[::1]/webhook`.
+  - **RFC1918**: `https://10.0.0.1/webhook`, `https://172.16.0.1/webhook`, `https://172.31.255.255/webhook`, `https://192.168.1.10/webhook`.
+  - **Link-local/IMDS/wildcard**: `https://169.254.169.254/latest/meta-data`, `https://169.254.1.1/webhook`, `https://0.0.0.0/webhook`, `https://[::]/webhook`.
+  - **Excecao Development**: `http://localhost:5000/webhook` aceita; `http://127.0.0.1:5000/webhook` aceita. `http://example.com` continua rejeitado mesmo em Development (sem ser host loopback).
+- Validacoes planejadas (comandos exatos do briefing):
+  - `git status --short` (working tree limpo antes de comecar; depois listar alteracoes).
+  - `dotnet restore PaymentHub.slnx`.
+  - `dotnet build PaymentHub.slnx` (0 erros / 0 warnings).
+  - `dotnet test PaymentHub.slnx` (verificar total >= 133 — baseline Slice 6-C).
+  - `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~RegisterApplicationClient"` (>= 16 testes).
+  - `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~WebhookUrl"` (>= 20 testes novos).
+  - `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~ApplicationWebhook"` (sem regressao).
+  - `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~OutboxDispatcherWorker"` (sem regressao).
+  - `scripts/agent-architecture-check.sh` (Application continua sem dependencia de Infrastructure/Api/Worker).
+  - `git diff --check`.
+- Criterios de aceite (do briefing, todos cobertos):
+  1. `WebhookUrl` invalida rejeitada (formato/scheme/host).
+  2. Nao-HTTPS rejeitado fora de Development.
+  3. localhost/loopback bloqueado fora de Development.
+  4. RFC1918 bloqueado.
+  5. Link-local/IMDS bloqueado.
+  6. Wildcard/unspecified bloqueado.
+  7. URLs publicas HTTPS continuam aceitas.
+  8. >= 19 testes do helper + >= 6 testes de handler.
+  9. `docs/specs/011-security-and-compliance.md` atualizado.
+  10. Build/test verde, `agent-architecture-check.sh` verde, dispatcher/worker/outbox intactos, sem avancar para 7-A.6 ou 7-A.9.
+- Riscos ja mapeados:
+  - **R1 (alto)**: `AddValidatorsFromAssemblyContaining` pode nao resolver `IRuntimeEnvironment` no ctor do validator. Mitigacao: implementar `IValidatorFactory` simples ou fallback no handler (decisao em Q1).
+  - **R2 (medio)**: IPv6 mapped IPv4 (`::ffff:127.0.0.1`) pode escapar do bloqueio de loopback se nao houver `IPAddress.MapToIPv4()` quando `IsIPv4MappedToIPv6 == true`. Mitigacao: explicito no helper.
+  - **R3 (baixo)**: hosts com Unicode/IDN (`xn--`, `localhost.com`) — `Uri.TryCreate` ja normaliza via `IdnHost` em .NET 10. Documentar que `.localhost`/`*.localhost` ja sao bloqueados; `.com.br` ou `xn--` nao sao (continuam publicos).
+  - **R4 (baixo)**: dispatcher existente (`HttpApplicationWebhookDispatcher.cs:111`) continua a usar `app.WebhookUrl` sem revalidacao. Spec do briefing diz "dispatcher must never use a WebhookUrl that bypasses this validation" — isto sera verdade **apos** este slice porque toda escrita passa pelo validator. Nao ha caminho de escrita de `WebhookUrl` alem do construtor da entidade exposto via `RegisterApplicationClientHandler`.
+- Proxima acao (implementer):
+  1. Implementar `WebhookUrlValidator` puro primeiro (TDD-friendly, sem DI).
+  2. Cobrir helper com `WebhookUrlValidatorTests.cs` (rodar `dotnet test --filter WebhookUrl` ate passar).
+  3. Integrar no `RegisterApplicationClientValidator` (resolver Q1 primeiro; documentar decisao no relatorio).
+  4. Atualizar `RegisterApplicationClientHandlerTests.cs` com cenario end-to-end via validator.
+  5. Atualizar `docs/specs/011-security-and-compliance.md`.
+  6. Criar `docs/audits/slice-7a5-webhook-url-ssrf-report-2026-06-26.md` com decisoes, Q1 respondida, validacoes executadas, gaps remanescentes.
+  7. Acionar `security-reviewer` + `qa-reviewer` em paralelo (apos implementer sinalizar fim), depois `architect-reviewer`.
+  8. Apos todos verdes: mover esta sub-seccao para `## Historico` (como `### 2026-06-26 - Slice 7-A.5 HTTPS/SSRF no WebhookUrl validator`) e seguir para 7-A.6 em slice separado.
+- Proximo sub-slice recomendado (sem implementar): **7-A.6** — Configuracao Worker/appsettings.json com placeholder `WebhookSecretEncryptionKey`.
+
 ## Historico
 
 Registre entradas concluídas abaixo quando fizer sentido manter rastreabilidade no repositorio.
+
+### 2026-06-26 - Slice 7-A.5 WebhookUrl HTTPS/SSRF protection
+
+- Data: 2026-06-26
+- Agente/superficie: OpenCode (Implementer)
+- Objetivo: Enderecar gap M3 do par de revisores do Slice 7-A. Validar `ApplicationClient.WebhookUrl` no `RegisterApplicationClientValidator` para bloquear SSRF (loopback, RFC1918, link-local/IMDS, wildcard, unspecified, multicast, broadcast, `localhost`/`*.localhost`/`*.local`).
+- Fora de escopo: dispatcher HTTP, worker/outbox, politica de `LastError`, provider real, painel admin, mensageria externa, rotacao de secret, retry/backoff, contrato de API Key, `Worker/appsettings.json`, ADRs.
+- Specs/ADRs/docs lidas: `AGENTS.md`, `docs/specs/011-security-and-compliance.md`, `docs/specs/002-multitenancy-and-authentication.md`, `docs/harness/security.md`, `docs/audits/payment-hub-current-state-audit-2026-06-17.md`, planner contract do proprio slice (linhas 38-126 deste arquivo).
+- Discovery: `RegisterApplicationClientValidator` tinha apenas `MaximumLength(2000)` em `WebhookUrl`. Sem checagem de scheme/host. `IRuntimeEnvironment` ja existia e ja era injetado em `CreateCheckoutHandler`, portanto o padrao estava pronto para ser replicado no validator.
+- Decisoes: (1) Helper puro `internal static class WebhookUrlValidator` em `src/PaymentHub.Application/Tenants/Validation/` com `public static bool IsAllowed(string? value, bool isDevelopment, out string? reason)` — sem DI, sem logging, sem exceptions; totalmente unit-testable. (2) `internal` + `<InternalsVisibleTo Include="PaymentHub.UnitTests" />` em `PaymentHub.Application.csproj` (padrao ja existente em `Worker.csproj:11`). (3) `RegisterApplicationClientValidator` recebe `IRuntimeEnvironment` no ctor e adiciona `RuleFor(x => x.WebhookUrl).MaximumLength(2000).Must(...).When(...).WithMessage("WebhookUrl must be an absolute HTTPS URL pointing to a public endpoint.")` — mensagem unificada anti-enumeration. (4) Politica de Development exception: HTTP aceito **somente** para hosts loopback (`localhost`, `127.0.0.0/8`, `::1`). Em Development, HTTPS+publico continua ok; em Production, HTTP sempre rejeitado. (5) IPv6-mapped IPv4 loopback (`::ffff:127.0.0.1`) normalizado via `IPAddress.IsIPv4MappedToIPv6` + `MapToIPv4()`. (6) Boundary RFC1918 correta: `172.15.x.x` e `172.32.x.x` permanecem publicos.
+- Q1 respondida (FluentValidation + DI): `AddValidatorsFromAssemblyContaining<RegisterTenantValidator>()` resolve o ctor do validator via DI automaticamente. `IRuntimeEnvironment` ja registrado como Singleton em `Program.cs:66`. **Nenhum fallback em `HandleAsync` foi necessario**.
+- Plano: 6 arquivos (3 criados + 3 alterados). Sem refatoracao ampla. Sem migration. Sem alteracao em dispatcher/worker/outbox.
+- Validacoes executadas: `dotnet restore PaymentHub.slnx` (passed); `dotnet build PaymentHub.slnx` (**0 errors / 0 warnings** em 9 projetos); `dotnet test PaymentHub.slnx` (**281 passed**, baseline 178 + 103); filtros `~WebhookUrl` (69 passed), `~RegisterApplicationClient` (50 passed), `~ApplicationWebhook` (13 passed, sem regressao), `~OutboxDispatcherWorker` (17 passed, sem regressao); `scripts/agent-architecture-check.sh` (passed); `git diff --check` (passed).
+- Evidencias: `WebhookUrlValidator` em `src/PaymentHub.Application/Tenants/Validation/WebhookUrlValidator.cs`; validator ctor injection em `src/PaymentHub.Application/Tenants/RegisterApplicationClientHandler.cs:99`; InternalsVisibleTo em `src/PaymentHub.Application/PaymentHub.Application.csproj:14`; nova secao de spec em `docs/specs/011-security-and-compliance.md`; relatorio completo em `docs/audits/slice-7a5-webhook-url-ssrf-report-2026-06-26.md`.
+- Riscos residuais: B4-security (headers `X-PaymentHub-Event`/`X-PaymentHub-Tenant`/`X-PaymentHub-Application` nao validados — deferred). `ApplicationClient.UpdateWebhook(...)` nao foi tocado porque nao existe endpoint de update na codebase atual; quando existir (Phase 5 painel admin), o mesmo helper deve ser reaproveitado. Cobertura de integracao continua zero (P2-2).
+- Aprendizados (a serem consolidados em `docs/harness/learnings.md`): helpers `internal static` + `InternalsVisibleTo` evitam inflar a API publica; FluentValidation resolve ctor via DI sem factory custom; mensagem de erro unificada e anti-enumeration; IPv6-mapped IPv4 exige normalizacao explicita antes do bloqueio de loopback.
+- Proximo sub-slice: **7-A.6** — `src/PaymentHub.Worker/appsettings.json` recebe placeholder documentado para `PaymentHub:WebhookSecretEncryptionKey`.
 
 ### 2026-06-25 - Slice 6-C Webhook secret protection
 

@@ -112,6 +112,35 @@ Implementacao:
 - Migration: nenhuma migration estrutural foi necessaria. A coluna `webhook_secret` (maxLength=500, nullable) foi mantida; o conteudo passa a ser o blob cifrado em Base64. Nao ha dados produtivos pre-existentes.
 - Tests: `AesWebhookSecretProtectorTests` (11 testes), `RegisterApplicationClientHandlerTests` (10 testes), `DevelopmentDataSeederTests` (3 testes novos), `HttpApplicationWebhookDispatcherTests` (3 testes). Total adicionado pelo Slice 6-C: 27 testes.
 
+### Protecao SSRF em `ApplicationClient.WebhookUrl`
+
+O `WebhookUrl` cadastrado por uma application e o destino real dos webhooks internos disparados pelo Worker. Sem validacao, um atacante que possua uma API Key valida poderia apontar a URL para servicos internos (cloud metadata service, bancos internos, redes privadas) e usar o Payment Hub como proxy para exfiltrar dados ou atacar a propria infraestrutura.
+
+Regra central:
+
+```text
+Webhooks internos NUNCA devem ser entregues em destinos nao-publicos.
+Toda escrita de WebhookUrl passa por RegisterApplicationClientValidator.
+```
+
+Regras obrigatorias:
+
+- **URI absoluta obrigatoria**: a entrada deve ser uma URI absoluta bem-formada (`Uri.TryCreate(value, UriKind.Absolute, out _)`). Caminhos relativos, fragmentos sem scheme, espacos em branco e valores vazios sao rejeitados.
+- **HTTPS obrigatorio**: o scheme deve ser `https`. O scheme `http` e permitido **apenas** em ambiente `Development` e **apenas** quando o host e loopback (`localhost`, `127.0.0.0/8`, `::1`).
+- **Hostnames bloqueados** (sempre, mesmo em Development para HTTPS): `localhost`, qualquer `*.localhost` (mDNS) e qualquer `*.local` (link-local).
+- **Enderecos IP bloqueados** (sempre): loopback IPv4 (`127.0.0.0/8`), loopback IPv6 (`::1`), IPv4-mapped IPv4 loopback (`::ffff:127.0.0.1` via `IPAddress.MapToIPv4()`), RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local/IMDS (`169.254.0.0/16`, `fe80::/10`), unspecified (`0.0.0.0`, `::`) e broadcast (`255.255.255.255`).
+- **Excecao de Development**: `http://localhost`/`http://127.0.0.1` sao aceitos em `Development` para permitir testes locais com tunelamento interno. Em `Production` ou `Staging`, esses URLs sao rejeitados.
+- **Mensagem unica de erro**: o validator devolve `WebhookUrl must be an absolute HTTPS URL pointing to a public endpoint.` para qualquer caso de rejeicao, sem revelar qual regra foi violada (anti-enumeration).
+- **Boundary do RFC1918**: `172.15.x.x` e `172.32.x.x` permanecem publicos (sao intencionalmente fora do bloco `172.16.0.0/12`).
+
+Implementacao:
+
+- Helper puro: `internal static class WebhookUrlValidator` em `src/PaymentHub.Application/Tenants/Validation/WebhookUrlValidator.cs`. Assinatura `public static bool IsAllowed(string? value, bool isDevelopment, out string? reason)`. Sem dependencia de DI, logging ou exceptions; totalmente unit-testable.
+- Validator: `RegisterApplicationClientValidator` em `src/PaymentHub.Application/Tenants/RegisterApplicationClientHandler.cs` recebe `IRuntimeEnvironment environment` por injecao de construtor e aplica `RuleFor(x => x.WebhookUrl).Must((req, url) => WebhookUrlValidator.IsAllowed(url, environment.IsDevelopment, out _))` quando `WebhookUrl` esta preenchida.
+- Auto-wiring: `AddValidatorsFromAssemblyContaining<RegisterTenantValidator>()` em `src/PaymentHub.Api/Program.cs:81` resolve `RegisterApplicationClientValidator` com `IRuntimeEnvironment` registrado como Singleton em `src/PaymentHub.Api/Program.cs:66`.
+- Cobertura de testes: `WebhookUrlValidatorTests` (66 casos expandidos de Theory) e `RegisterApplicationClientValidatorTests` (17 testes). Total adicionado pelo Slice 7-A.5: 80+ testes.
+- Cobre todos os vetores de SSRF mapeados em auditoria M3 (Worker chama `HttpApplicationWebhookDispatcher.DispatchAsync(outboxEvent)` → `client.WebhookUrl` → HTTP POST; qualquer URL privada seria um SSRF direto).
+
 ## Criterios de aceite
 
 - Revisao de seguranca nao encontra secrets reais em repo.
@@ -125,6 +154,12 @@ Implementacao:
 - Payload duplicado.
 - HMAC de webhook interno.
 - Logs sem secrets quando possivel.
+- WebhookUrl publica HTTPS aceita.
+- WebhookUrl nao-HTTPS rejeitada fora de Development.
+- WebhookUrl localhost / loopback / RFC1918 / link-local / IMDS / wildcard rejeitada.
+- WebhookUrl IPv4-mapped IPv4 loopback (`::ffff:127.0.0.1`) rejeitada.
+- WebhookUrl malformada rejeitada.
+- WebhookUrl HTTP loopback aceita somente em Development.
 
 ## Arquivos relacionados
 

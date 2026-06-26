@@ -59,6 +59,13 @@ public class OutboxEvent
         UpdatedAt = DateTime.UtcNow;
     }
 
+    /// <summary>
+    /// Legacy: persists an arbitrary error string. Slice 7-A.7 introduces the safer
+    /// <see cref="MarkRetryWithCategory(WebhookDispatcherCategory, DateTime)"/> /
+    /// <see cref="MarkRetryWithStatus(WebhookDispatcherCategory, int, DateTime)"/> variants
+    /// that never persist <c>ex.Message</c>. Kept for backwards compatibility with existing
+    /// entity unit tests; production code in <c>OutboxDispatcherWorker</c> no longer calls it.
+    /// </summary>
     public void MarkRetry(string error, DateTime nextRetryAt)
     {
         Status = OutboxEventStatus.Pending;
@@ -68,6 +75,10 @@ public class OutboxEvent
         UpdatedAt = DateTime.UtcNow;
     }
 
+    /// <summary>
+    /// Legacy: persists an arbitrary error string. See <see cref="MarkRetry"/> for the safe
+    /// replacement used by the worker after Slice 7-A.7.
+    /// </summary>
     public void MarkFailed(string error)
     {
         Status = OutboxEventStatus.Failed;
@@ -76,6 +87,63 @@ public class OutboxEvent
         NextRetryAt = null;
         UpdatedAt = DateTime.UtcNow;
     }
+
+    /// <summary>
+    /// Safe retry marker for failures without an HTTP status code
+    /// (<see cref="WebhookDispatcherCategory.NetworkError"/>, <see cref="WebhookDispatcherCategory.Timeout"/>,
+    /// <see cref="WebhookDispatcherCategory.UnprotectFailure"/>, <see cref="WebhookDispatcherCategory.MissingWebhookUrl"/>,
+    /// <see cref="WebhookDispatcherCategory.UnexpectedDispatcherError"/>). Persists only the
+    /// category name to <c>LastError</c>; never <c>ex.Message</c> or response bodies.
+    /// </summary>
+    public void MarkRetryWithCategory(WebhookDispatcherCategory category, DateTime nextRetryAt)
+    {
+        Status = OutboxEventStatus.Pending;
+        RetryCount += 1;
+        LastError = category.ToString();
+        NextRetryAt = nextRetryAt;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Safe retry marker for HTTP failures. Persists
+    /// <c>"{category}: status={statusCode}"</c> to <c>LastError</c>. Status code is an integer
+    /// (e.g. 500, 429, 404) and is safe to persist; the response body is not.
+    /// </summary>
+    public void MarkRetryWithStatus(WebhookDispatcherCategory category, int statusCode, DateTime nextRetryAt)
+    {
+        Status = OutboxEventStatus.Pending;
+        RetryCount += 1;
+        LastError = FormatStatusError(category, statusCode);
+        NextRetryAt = nextRetryAt;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Safe terminal failure marker for non-HTTP failures. See <see cref="MarkRetryWithCategory"/>.
+    /// </summary>
+    public void MarkFailedWithCategory(WebhookDispatcherCategory category)
+    {
+        Status = OutboxEventStatus.Failed;
+        RetryCount += 1;
+        LastError = category.ToString();
+        NextRetryAt = null;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Safe terminal failure marker for HTTP failures. See <see cref="MarkRetryWithStatus"/>.
+    /// </summary>
+    public void MarkFailedWithStatus(WebhookDispatcherCategory category, int statusCode)
+    {
+        Status = OutboxEventStatus.Failed;
+        RetryCount += 1;
+        LastError = FormatStatusError(category, statusCode);
+        NextRetryAt = null;
+        UpdatedAt = DateTime.UtcNow;
+    }
+
+    private static string FormatStatusError(WebhookDispatcherCategory category, int statusCode)
+        => $"{category}: status={statusCode}";
 
     private static string Truncate(string value, int maxLength)
         => string.IsNullOrEmpty(value) || value.Length <= maxLength

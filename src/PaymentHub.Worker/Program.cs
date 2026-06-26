@@ -1,5 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using PaymentHub.Application.Abstractions.Outbox;
+using PaymentHub.Application.Abstractions.Security;
 using PaymentHub.Application.Checkouts;
 using PaymentHub.Application.Payments;
 using PaymentHub.Application.Tenants;
@@ -39,13 +40,21 @@ public class Program
             builder.Services.AddScoped<IListPaymentsHandler, ListPaymentsHandler>();
             builder.Services.AddScoped<IReceiveProviderWebhookHandler, ReceiveProviderWebhookHandler>();
             builder.Services.AddScoped<IProcessWebhookEventHandler, ProcessWebhookEventHandler>();
-            builder.Services.AddHttpClient("application-webhook");
-            builder.Services.AddScoped<IApplicationWebhookDispatcher, NoopApplicationWebhookDispatcher>();
 
             builder.Services.AddHostedService<WebhookProcessorWorker>();
             builder.Services.AddHostedService<OutboxDispatcherWorker>();
 
             var host = builder.Build();
+
+            // Fail-fast (Slice 7-A, security-reviewer B2): resolve IWebhookSecretProtector before
+            // host.Run() so a misconfigured PaymentHub:WebhookSecretEncryptionKey surfaces as a
+            // startup error in the Worker log instead of being deferred to the first outbox
+            // dispatch. The dispatcher is registered by AddPaymentHubPostgres.
+            using (var scope = host.Services.CreateScope())
+            {
+                _ = scope.ServiceProvider.GetRequiredService<IWebhookSecretProtector>();
+            }
+
             host.Run();
         }
         catch (Exception ex)
@@ -56,16 +65,5 @@ public class Program
         {
             Log.CloseAndFlush();
         }
-    }
-}
-
-internal sealed class NoopApplicationWebhookDispatcher : IApplicationWebhookDispatcher
-{
-    public Task DispatchAsync(Domain.Entities.OutboxEvent outboxEvent, CancellationToken cancellationToken)
-    {
-        Log.Warning(
-            "Outbox event {OutboxId} ({EventType}) for tenant {TenantId} has no dispatcher configured in the Worker process; configure HTTP dispatcher via API process or a dedicated dispatcher service.",
-            outboxEvent.Id, outboxEvent.EventType, outboxEvent.TenantId);
-        return Task.CompletedTask;
     }
 }

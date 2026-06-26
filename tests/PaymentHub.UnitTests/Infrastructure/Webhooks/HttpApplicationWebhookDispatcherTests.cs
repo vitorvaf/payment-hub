@@ -6,12 +6,13 @@ using Moq;
 using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Abstractions.Security;
-using PaymentHub.Api.Webhooks;
 using PaymentHub.Domain.Entities;
+using PaymentHub.Domain.Enums;
 using PaymentHub.Infrastructure.Postgres.Options;
+using PaymentHub.Infrastructure.Postgres.Webhooks;
 using PaymentHub.UnitTests.Support;
 
-namespace PaymentHub.UnitTests.Api.Webhooks;
+namespace PaymentHub.UnitTests.Infrastructure.Webhooks;
 
 public class HttpApplicationWebhookDispatcherTests
 {
@@ -36,7 +37,7 @@ public class HttpApplicationWebhookDispatcherTests
             "{\"eventId\":\"00000000-0000-0000-0000-000000000001\"}");
 
         var appsRepo = new Mock<IApplicationClientRepository>(MockBehavior.Strict);
-        appsRepo.Setup(r => r.GetByIdAsync(app.Id, It.IsAny<CancellationToken>()))
+        appsRepo.Setup(r => r.GetByTenantAndIdAsync(app.TenantId, app.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(app);
 
         var captured = new CapturingHandler();
@@ -72,7 +73,7 @@ public class HttpApplicationWebhookDispatcherTests
             "{}");
 
         var appsRepo = new Mock<IApplicationClientRepository>(MockBehavior.Strict);
-        appsRepo.Setup(r => r.GetByIdAsync(app.Id, It.IsAny<CancellationToken>()))
+        appsRepo.Setup(r => r.GetByTenantAndIdAsync(app.TenantId, app.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(app);
 
         var captured = new CapturingHandler();
@@ -103,13 +104,17 @@ public class HttpApplicationWebhookDispatcherTests
             "{}");
 
         var appsRepo = new Mock<IApplicationClientRepository>(MockBehavior.Strict);
-        appsRepo.Setup(r => r.GetByIdAsync(app.Id, It.IsAny<CancellationToken>()))
+        appsRepo.Setup(r => r.GetByTenantAndIdAsync(app.TenantId, app.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(app);
 
         var captured = new CapturingHandler();
         var dispatcher = CreateDispatcher(appsRepo.Object, captured, new FakeWebhookSecretProtector());
 
-        await dispatcher.DispatchAsync(outbox, CancellationToken.None);
+        // Slice 7-A.7: unprotect failure now raises a typed WebhookDispatcherException so the
+        // worker can categorise the failure without persisting the exception's message.
+        var act = async () => await dispatcher.DispatchAsync(outbox, CancellationToken.None);
+        await act.Should().ThrowAsync<WebhookDispatcherException>()
+            .Where(ex => ex.Category == WebhookDispatcherCategory.UnprotectFailure);
 
         // Dispatcher must NOT send the HTTP request when the protected secret cannot be unprotectd,
         // because sending without a valid signature would either deliver a wrong signature or expose

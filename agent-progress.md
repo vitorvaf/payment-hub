@@ -40,6 +40,7 @@ Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e v
 - Data: 2026-06-26
 - Agente/superficie: OpenCode (Planner)
 - Status: **Concluido em 2026-06-26** (Implementer + validacoes finais). Relatorio em `docs/audits/slice-7a5-webhook-url-ssrf-report-2026-06-26.md`.
+- Slice 7-A.6 tambem concluido em 2026-06-26 (configuracao Worker/appsettings.json com placeholder de `PaymentHub:WebhookSecretEncryptionKey`).
 - Resumo da implementacao: helper puro `internal static class WebhookUrlValidator` em `src/PaymentHub.Application/Tenants/Validation/WebhookUrlValidator.cs` (~200 linhas) com `public static bool IsAllowed(string? value, bool isDevelopment, out string? reason)`. `RegisterApplicationClientValidator` recebe `IRuntimeEnvironment environment` por injecao de construtor e adiciona `RuleFor(x => x.WebhookUrl).Must((req, url) => WebhookUrlValidator.IsAllowed(url, environment.IsDevelopment, out _)).When(x => !string.IsNullOrWhiteSpace(x.WebhookUrl)).WithMessage("WebhookUrl must be an absolute HTTPS URL pointing to a public endpoint.")`. `<InternalsVisibleTo Include="PaymentHub.UnitTests" />` adicionado em `PaymentHub.Application.csproj` (padrao ja existente em `PaymentHub.Worker.csproj:11`).
 - Q1 respondida: `AddValidatorsFromAssemblyContaining<RegisterTenantValidator>()` em `Program.cs:81` resolve o construtor de `RegisterApplicationClientValidator` via DI automaticamente; `IRuntimeEnvironment` ja esta registrado como Singleton em `Program.cs:66`, entao nenhum fallback em `HandleAsync` foi necessario.
 - Validacoes executadas: `dotnet restore`, `dotnet build` (0 errors/0 warnings em 9 projetos), `dotnet test` (**281 tests passed**, baseline 178 + 103 casos expandidos), `dotnet test --filter WebhookUrl` (69 passed), `dotnet test --filter RegisterApplicationClient` (50 passed), `dotnet test --filter ApplicationWebhook` (13 passed, sem regressao), `dotnet test --filter OutboxDispatcherWorker` (17 passed, sem regressao), `scripts/agent-architecture-check.sh` (passed), `git diff --check` (passed).
@@ -135,6 +136,21 @@ Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e v
 ## Historico
 
 Registre entradas concluídas abaixo quando fizer sentido manter rastreabilidade no repositorio.
+
+### 2026-06-26 - Slice 7-A.6 Worker appsettings placeholder for WebhookSecretEncryptionKey
+
+- Data: 2026-06-26
+- Agente/superficie: OpenCode (Implementer)
+- Objetivo: Garantir que o Worker tenha configuracao explicita da chave `PaymentHub:WebhookSecretEncryptionKey`. O `appsettings.json` (production) nao continha a secao `PaymentHub`, deixando o operador sem nome canonico da chave a ser fornecida por canal externo.
+- Fora de escopo: 7-A.9 (ADRs/roadmap), dispatcher HTTP, Outbox worker, validador SSRF, provider real, painel admin, algoritmo de protecao, fail-fast, testes fortes do 7-A.8.
+- Specs/ADRs/docs lidas: `AGENTS.md`, `docs/specs/011-security-and-compliance.md`, briefing do proprio slice, `docs/audits/slice-7a5-webhook-url-ssrf-report-2026-06-26.md`, planner contract do Slice 7-A pai.
+- Discovery: `src/PaymentHub.Worker/appsettings.json` (linhas 1-26) nao continha `PaymentHub` nem `WebhookSecretEncryptionKey`. `src/PaymentHub.Worker/appsettings.Development.json` ja trazia `"WebhookSecretEncryptionKey": "dev-webhook-secret-key-change-me-32bytes"` (39 chars, compativel com o protector que faz `PadRight(32, '0')`). `PaymentHubOptions.WebhookSecretEncryptionKey` em `src/PaymentHub.Infrastructure.Postgres/Options/PaymentHubOptions.cs:10` confirma o nome canonico. `AesWebhookSecretProtector` em `src/PaymentHub.Infrastructure.Postgres/Security/CryptoServices.cs:87-91` lanca `InvalidOperationException("PaymentHub:WebhookSecretEncryptionKey is required.")` quando ausente. Fail-fast em `src/PaymentHub.Worker/Program.cs:53-56` ja estava intacto.
+- Decisao: adicionar placeholder vazio explicito em `Worker/appsettings.json` (production), preservando o nome canonico da chave. **Nenhum valor real commitado**. `appsettings.Development.json` permanece com valor fake de 39 caracteres. API nao foi tocada (mesmo gap existe la mas o briefing deste slice limita escopo ao Worker).
+- Plano: 3 arquivos alterados (Worker/appsettings.json + spec 011 + agent-progress.md). Sem codigo, sem testes, sem migration.
+- Validacoes executadas: `git status --short`; `dotnet restore PaymentHub.slnx`; `dotnet build PaymentHub.slnx` (**0 errors / 0 warnings** em 9 projetos); `dotnet test PaymentHub.slnx` (**281 passed**, sem regressao); `--filter ~WebhookSecret` (passing); `--filter ~ApplicationWebhook` (13 passed, sem regressao); `--filter ~OutboxDispatcherWorker` (17 passed, sem regressao); `scripts/agent-architecture-check.sh` (passed); `git diff --check` (passed).
+- Evidencias: `src/PaymentHub.Worker/appsettings.json` agora contem `"PaymentHub": { "WebhookSecretEncryptionKey": "" }` como placeholder; `src/PaymentHub.Worker/appsettings.Development.json` mantem o valor dev; `docs/specs/011-security-and-compliance.md` ganhou subsecao `#### Configuracao da chave por ambiente (Worker e API)` com regras de production/dev/variavel de ambiente; agent-progress.md atualizado.
+- Riscos residuais: API `appsettings.json` ainda nao tem a secao `PaymentHub` (mesmo gap, mesmo risco). **Nao tratado** neste slice por constraint de escopo. Recomendacao: aplicar o mesmo placeholder em `src/PaymentHub.Api/appsettings.json` em slice proprio ou como parte de 7-A.9.
+- Proximo sub-slice (sem implementar): **7-A.9** — Documentacao final (ADR-0007, ADR-0010, indice, feature_list `PH-WORKER-001` → Concluido, roadmap 002-phase-status-board P1-4 resolvido, learnings.md) + relatorio consolidado do Slice 7-A.
 
 ### 2026-06-26 - Slice 7-A.5 WebhookUrl HTTPS/SSRF protection
 

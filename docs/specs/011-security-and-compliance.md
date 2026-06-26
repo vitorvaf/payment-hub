@@ -112,6 +112,26 @@ Implementacao:
 - Migration: nenhuma migration estrutural foi necessaria. A coluna `webhook_secret` (maxLength=500, nullable) foi mantida; o conteudo passa a ser o blob cifrado em Base64. Nao ha dados produtivos pre-existentes.
 - Tests: `AesWebhookSecretProtectorTests` (11 testes), `RegisterApplicationClientHandlerTests` (10 testes), `DevelopmentDataSeederTests` (3 testes novos), `HttpApplicationWebhookDispatcherTests` (3 testes). Total adicionado pelo Slice 6-C: 27 testes.
 
+#### Configuracao da chave por ambiente (Worker e API)
+
+A chave `PaymentHub:WebhookSecretEncryptionKey` e lida por `PaymentHubOptions.WebhookSecretEncryptionKey` (secao `PaymentHub`) e consumida pelo protector **em todos os pontos que cifram ou decifram** o segredo de webhook. O mesmo valor precisa estar disponivel na **API** (que cifra em `RegisterApplicationClientHandler.HandleAsync`) e no **Worker** (que decifra em `HttpApplicationWebhookDispatcher.DispatchAsync` antes de assinar HMAC). Sem o mesmo valor nos dois processos, `Unprotect` falha e o dispatcher aborta o envio (slice 6-C).
+
+Regras de configuracao:
+
+- `appsettings.json` (production): placeholder explicito vazio.
+  ```json
+  {
+    "PaymentHub": {
+      "WebhookSecretEncryptionKey": ""
+    }
+  }
+  ```
+  O placeholder documenta o nome canonico da chave e obriga o operador a fornecer valor real por canal externo. **Nenhum valor real pode ser commitado**.
+- `appsettings.Development.json` (dev/test): valor fake explicito de pelo menos 32 caracteres (ex.: `dev-webhook-secret-key-change-me-32bytes`). Serve apenas para que o Worker e a API subam localmente e para que os testes passem sem variavel de ambiente. **Nunca usar em producao**.
+- Producao: valor real vem por variavel de ambiente (ex.: `PaymentHub__WebhookSecretEncryptionKey=<valor-real>`), secret manager, Docker secret ou mecanismo equivalente. O mesmo valor precisa ser fornecido para a API e o Worker; divergencia provoca `InvalidOperationException("Protected webhook secret purpose mismatch.")` no primeiro dispatch e o Worker entra em loop de retry (slice 6-C + slice 7-A.3 + slice 7-A.6).
+- Fail-fast no Worker: `src/PaymentHub.Worker/Program.cs:53-56` resolve `IWebhookSecretProtector` em um scope anonimo antes de `host.Run()`. Se a chave estiver ausente, a excecao e capturada pelo `try/catch` externo e logada como fatal (slice 7-A.3). A API tem o mesmo comportamento por meio do `AddPaymentHubPostgres` que registra o protector como Singleton — a primeira resolucao falha com `InvalidOperationException` antes do request pipeline subir.
+- Tamanho minimo: o protector preenche com `0` ate 32 bytes quando o valor e menor. Isso evita crash em dev com valor curto, mas nao dispensa o requisito de chave com entropia razoavel em producao (>= 32 bytes aleatorios).
+
 ### Protecao SSRF em `ApplicationClient.WebhookUrl`
 
 O `WebhookUrl` cadastrado por uma application e o destino real dos webhooks internos disparados pelo Worker. Sem validacao, um atacante que possua uma API Key valida poderia apontar a URL para servicos internos (cloud metadata service, bancos internos, redes privadas) e usar o Payment Hub como proxy para exfiltrar dados ou atacar a propria infraestrutura.

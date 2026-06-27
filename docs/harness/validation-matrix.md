@@ -137,8 +137,21 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | 7 | 7-A | Docs | `docs/roadmap/000-payment-hub-roadmap.md` | P1-4 marcado como resolvido | Resolvido | `PASS` | 2026-06-26 |
 | 7 | 7-A | Docs | `docs/roadmap/002-phase-status-board.md` | Phase 7 com 0 gaps P1 proprios | 0 gaps P1 proprios | `PASS` | 2026-06-26 |
 | 7 | 7-A | Docs | `feature_list.md` PH-WORKER-001 | Concluido | Concluido | `PASS` | 2026-06-26 |
-| 7 | Workers | Integration | `OutboxDispatcherWorker` com banco real | OutboxEvent marcado como Sent apos HTTP 200 | `PENDING` | `PENDING` | — (Slice 1-IT) |
-| 7 | Workers | Integration | `WebhookProcessorWorker` com banco real | WebhookEvent processado e OutboxEvent criado | `PENDING` | `PENDING` | — (Slice 1-IT) |
+| 7 | Workers | Integration | `OutboxDispatcherWorker` com banco real | OutboxEvent marcado como Sent apos HTTP 200 | `PENDING` | `PENDING` | — (Slice 7-IT) |
+| 7 | Workers | Integration | `WebhookProcessorWorker` com banco real | WebhookEvent processado e OutboxEvent criado | `PENDING` | `PENDING` | — (Slice 7-IT) |
+| 7 | 1-IT | Integration | `dotnet test tests/PaymentHub.IntegrationTests` | Migrations + repositorios principais + Outbox via Testcontainers | 10 testes passando (Postgres 16-alpine, container compartilhado por run + `TRUNCATE CASCADE` entre testes) | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 1 | 1-IT | Integration | `Migrations_ShouldApplySuccessfully_OnEmptyPostgresDatabase` | `MigrateAsync` em banco vazio + `INFORMATION_SCHEMA` | Tabelas `tenants`, `application_clients`, `provider_accounts`, `api_keys`, `payments`, `payment_attempts`, `webhook_events`, `outbox_events`, `audit_logs`, `idempotency_keys` presentes | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 1 | 1-IT | Integration | `DbContext_ShouldPersistTenantAndApplicationClient_AndReloadCorrectly` | Roundtrip de `Tenant`/`ApplicationClient` com `Guid`/status preservados | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 1 | 1-IT | Integration | `Tenant_AndApplication_UniqueIndex_ShouldPreventDuplicateSlug` | Indice unico `tenants.slug` recusa duplicata (`DbUpdateException`) | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 6 | 1-IT | Integration | `ApplicationClient_ShouldPersistProtectedWebhookSecret_AndAllowInternalUnprotect` | Plaintext nao persistido + `Unprotect` recupera original + `HasWebhookSecret` | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 6 | 1-IT | Integration | `ApplicationClient_WithoutWebhookSecret_ShouldReportHasWebhookSecretFalse` | `HasWebhookSecret` consistente apos reload | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 1 | 1-IT | Integration | `ProviderAccountRepository_ShouldPersistAndLoadByTenantAndApplication` | `GetDefaultAsync` + `GetByCodeAsync` retornam conta persistida | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 1 | 1-IT | Integration | `ProviderAccountRepository_ShouldRespectsTenantScope` | Conta de outro tenant nao vaza | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 7 | 1-IT | Integration | `OutboxEvent_ShouldPersistPendingProcessingAndSentStates` | Transicoes `Pending` -> `Processing` -> `Sent` via `IOutboxEventStore` | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 7 | 1-IT | Integration | `OutboxEvent_SafeRetry_ShouldPersistCategoryWithoutExceptionMessage` | `MarkRetryWithCategory` grava apenas categoria em `LastError` | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 7 | 1-IT | Integration | `OutboxRepository_ShouldReturnOnlyDispatchablePendingEvents` | Query retorna apenas `Pending` com `NextRetryAt <= now` | Passou (5 estados cobertos; `Processing` orfao documentado como gap) | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 7 | 1-IT | Docs | `docs/audits/slice-1-it-postgres-integration-tests-report-2026-06-26.md` | Relatorio final + Q1-Q5 respondidas + gaps remanescentes | Criado | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 7 | 1-IT | Architecture | `scripts/agent-architecture-check.sh` | IntegrationTests respeita camadas (Domain/Application/Infrastructure.Postgres) | Passed | `PASS` | 2026-06-26 (Slice 1-IT) |
 
 ---
 

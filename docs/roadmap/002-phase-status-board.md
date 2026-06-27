@@ -13,7 +13,7 @@ Data de referencia: 2026-06-26
 | 4 | Multi-Provider | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 2 + Phase 6 + Phase 7 |
 | 5 | Painel Admin | `NOT_STARTED` | 0 | 0 | Aguarda Phase 6 |
 | 6 | Seguranca e Confiabilidade | `IMPLEMENTING` | **0 proprios³** | 1 (audit log P2-3) | Aguarda P2-3 |
-| 7 | Workers e Outbox | `IMPLEMENTING` | **0 proprios⁴** | 1 (testes integracao) | Aguarda Slice 1-IT / Phase 9 |
+| 7 | Workers e Outbox | `IMPLEMENTING` | **0 proprios⁴** | 1 (end-to-end API+Worker, sweep Processing, multi-instancia) | Aguarda Phase 9 / Slice 7-IT (multi-instancia) |
 | 8 | Conciliacao Financeira | `NOT_STARTED` | 0 | 0 | Aguarda Phase 4 + 7 |
 | 9 | Relatorios e Observabilidade | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 6 + 7 |
 | 10 | Evolucoes Futuras | `NOT_STARTED` | 0 | 0 | Backlog de produto |
@@ -36,7 +36,7 @@ Notas:
 
 ³ Phase 6 esta com 0 gaps P1 proprios apos o Slice 6-C. Os 5 gaps P1 originais da auditoria de 2026-06-17 foram resolvidos pelos Slices 6-A, 6-B, 6-C e 6-D. A fase continua `IMPLEMENTING` ate que P2-3 (AuditLog em handlers administrativos) seja fechado.
 
-⁴ Phase 7 esta com 0 gaps P1 proprios apos o Slice 7-A (2026-06-26). O gap P1-4 foi resolvido. A fase continua `IMPLEMENTING` ate que gaps P2 (testes de integracao com Postgres/migrations via Slice 1-IT, sweep de eventos `Processing` orfaos, `FOR UPDATE SKIP LOCKED` para multi-instancia) sejam fechados.
+⁴ Phase 7 esta com 0 gaps P1 proprios apos o Slice 7-A (2026-06-26) e a entrega da base de integracao via Slice 1-IT (2026-06-26: migrations + repositorios principais + Outbox via Testcontainers, 10 testes passando). A fase continua `IMPLEMENTING` ate que gaps P2 remanescentes (sweep de eventos `Processing` orfaos, `FOR UPDATE SKIP LOCKED` para multi-instancia, end-to-end API+Worker com banco real) sejam fechados em slices proprios.
 
 ---
 
@@ -57,7 +57,7 @@ Notas:
 - Worker com fail-fast de chave criptografica (Slice 7-A.3 + 7-A.6).
 - Tenant/application enforcement no middleware (Slice 6-A).
 - Status canonico independente de provider.
-- 281 testes unitarios passando; build limpo.
+- 281 testes unitarios + 10 testes de integracao com Postgres (Testcontainers) passando; build limpo.
 
 ### Gaps P1 resolvidos (auditoria de 2026-06-17)
 
@@ -76,7 +76,7 @@ Fonte: `docs/audits/spec-adherence-audit-2026-06-17.md`
 | # | Gap | Phase afetada | Slice sugerido |
 |---|-----|---------------|----------------|
 | P2-1 | Assinatura de webhooks externos nao e validada nos adapters reais | Phase 2, 4 | Slice 2-A (AbacatePay) |
-| P2-2 | Projeto de testes de integracao sem testes descobertos | Phase 1, 3, 7 | Slice 1-IT |
+| P2-2 | Projeto de testes de integracao sem testes descobertos | Phase 1, 3, 7 | Slice 1-IT `[PARCIALMENTE RESOLVIDO 2026-06-26 — 10 testes passam; e2e API+Worker ainda nao coberto]` |
 | P2-3 | Acoes administrativas sensiveis nao gravam `AuditLog` | Phase 6 | Proximo slice de Phase 6 |
 | P2-4 | Integridade referencial no banco e parcial (poucas FKs) | Phase 1 | ADR-0009 (proposto) |
 | P2-5 | Documentacao de arquitetura usa formato antigo de assinatura HMAC | Phase 0 | Slice documental |
@@ -105,7 +105,7 @@ Slice 6-D  Politica de bootstrap/admin + AuditLog em handlers administrativos  [
 Criar primeira fixture de integracao com Testcontainers ou Docker Compose.
 
 ```
-Slice 1-IT  Fixture Postgres + migrations + indices criticos
+Slice 1-IT  Fixture Postgres + migrations + indices criticos + repositorios principais   [CONCLUIDO 2026-06-26]
 Slice 3-IT  Testes de middleware, checkout autenticado e idempotencia
 Slice 7-IT  Testes de workers (inbox/outbox) com banco real
 ```
@@ -134,7 +134,7 @@ Slice 5-C  UI minima de gestao de tenants/applications/provider accounts
 | Indicador | Valor atual | Meta |
 |-----------|------------|------|
 | Testes unitarios passando | 281 | >= 64 |
-| Testes de integracao | 0 | >= 5 |
+| Testes de integracao (Postgres real) | 10 | >= 5 |
 | Gaps P0 abertos | 0 | 0 |
 | Gaps P1 abertos | **0** | 0 |
 | Gaps P2 abertos | 8 | <= 2 |
@@ -151,5 +151,6 @@ Slice 5-C  UI minima de gestao de tenants/applications/provider accounts
 - `docs/audits/roadmap-adherence-matrix-2026-06-17.md`
 - `docs/audits/slice-6c-webhook-secret-protection-report-2026-06-25.md`
 - `docs/audits/slice-7a-real-outbox-dispatcher-report-2026-06-26.md`
+- `docs/audits/slice-1-it-postgres-integration-tests-report-2026-06-26.md`
 - `docs/audits/slice-7a5-webhook-url-ssrf-report-2026-06-26.md`
 - `docs/audits/slice-7a6-worker-appsettings-webhook-secret-key-report-2026-06-26.md`

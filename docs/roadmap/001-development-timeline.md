@@ -21,7 +21,7 @@ Legenda de prioridade:
 | 2 | Phase 1 | Core domain MVP e API | P0 | L | MEDIUM | `IMPLEMENTED` | Phase 0 |
 | 3 | Phase 2 | Primeiro adapter de provider (AbacatePay) | P0 | M | MEDIUM | `IMPLEMENTING` | Phase 1 |
 | 4 | Phase 3 | Webhooks externos e internos | P0 | M | MEDIUM | `IMPLEMENTING` | Phase 1 |
-| 5 | Phase 7 | Workers, Outbox e processamento assincrono | P1 | M | MEDIUM | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-26) | Phase 3, Phase 6 |
+| 5 | Phase 7 | Workers, Outbox e processamento assincrono | P1 | M | MEDIUM | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-26; base de integracao entregue 2026-06-26 via Slice 1-IT) | Phase 3, Phase 6 |
 | 6 | Phase 6 | Seguranca e confiabilidade | P1 | M | HIGH | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-25) | Phase 1 |
 | 7 | Phase 4 | Multi-provider (Stripe + MercadoPago) | P1 | L | MEDIUM | `SPEC_DRAFTED` | Phase 2, Phase 3 |
 | 8 | Phase 9 | Relatorios, metricas e observabilidade | P2 | L | LOW | `SPEC_DRAFTED` | Phase 6, Phase 7 |
@@ -82,7 +82,7 @@ Com base no estado atual (`IMPLEMENTING` em Phases 2, 3, 6, 7) e nos achados P1 
 3. **Slice 6-B**: Corrigir `RegisterProviderAccountHandler` para derivar tenant/application do `ITenantContext`. `[CONCLUIDO 2026-06-18]`
 4. **Slice 6-C**: Proteger `ApplicationClient.WebhookSecret` em repouso. `[CONCLUIDO 2026-06-25]`
 5. **Slice 6-D**: Politica de bootstrap/admin seed. `[CONCLUIDO 2026-06-18]`
-6. **Slice 1-IT**: Criar primeira fixture de integracao com Postgres (migrations + indices).
+6. **Slice 1-IT**: Criar primeira fixture de integracao com Postgres (migrations + indices). `[CONCLUIDO 2026-06-26]`
 7. **Slice 2-A**: Implementar adapter AbacatePay funcional com validacao de assinatura de webhook.
 
 ## Slices concluidos apos a geracao inicial (2026-06-26)
@@ -99,7 +99,7 @@ Com base na execucao do Bloco A ate 2026-06-26, os 5 gaps P1 da auditoria de 202
 
 Phase 6 e Phase 7 alcancaram 0 gaps P1 proprios em 2026-06-25 e 2026-06-26, respectivamente. Bloco A esta fechado.
 
-Proximo passo recomendado: **Slice 1-IT** (testes de integracao com Postgres/migrations) ou **Slice 2-A** (AbacatePay sandbox funcional). Ambos sao fora do Bloco A; a ordem depende de decisao de produto.
+Proximo passo recomendado: **Slice 2-A** (AbacatePay sandbox funcional). Slice 1-IT (base de testes de integracao com Postgres) foi concluido em 2026-06-26; slices de integracao end-to-end (middleware/checkout/workers com banco real) dependem de decisao de produto entre Phase 2 e Phase 7.
 
 ---
 

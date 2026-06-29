@@ -2,9 +2,165 @@
 
 Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e verificaveis.
 
+## Historico
+
+### 2026-06-29 - Slice 2-B fechado (conclusao + commit)
+
+- Data: 2026-06-29
+- Agente/superficie: OpenCode (Implementer)
+- Sub-slices entregues: 2-B.1, 2-B.2, 2-B.3, 2-B.4, 2-B.5, 2-B.6, 2-B.7.
+- Q1-Q5 respondidas em `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md`.
+- Validacao final: `dotnet build` (0/0); `dotnet test` (418 passed); `scripts/agent-architecture-check.sh`, `scripts/agent-docs-check.sh`, `scripts/agent-smoke.sh` todos verdes; `git diff --check` limpo.
+- Phase 2 passa a `IMPLEMENTED`. Phase 3 mantem `IMPLEMENTING` ate webhooks de Stripe/MercadoPago (Phase 4).
+- Gap P2-1 (assinatura de webhooks externos em adapter real) resolvido para AbacatePay.
+- Commit: `feat(provider): process AbacatePay external webhooks (Slice 2-B)`.
+- Push: `origin dev`.
+
 ## Entrada atual
 
-Nenhuma entrada ativa. Para retomar, abra o proximo slice recomendado em `docs/roadmap/002-phase-status-board.md` ou `docs/audits/slice-2a-abacatepay-sandbox-report-2026-06-26.md` (Proximo slice recomendado: **Slice 2-B — AbacatePay webhooks externos e normalizacao de eventos**).
+### Slice 2-B — AbacatePay webhooks externos e normalizacao de eventos
+
+Status: CONCLUIDO 2026-06-29 (Slice 2-B.7 — docs, roadmap, learnings, audit report fechados; commit + push pendentes)
+
+Sub-slices concluidos:
+
+- 2-B.1 — `IAbacatePayWebhookSignatureVerifier` + `HmacAbacatePayWebhookSignatureVerifier` (HMAC-SHA256 base64 sobre body UTF-8, `CryptographicOperations.FixedTimeEquals`).
+- 2-B.2 — `AbacatePayWebhookEnvelope` + `AbacatePayTransparentWebhookData` (Models).
+- 2-B.3 — `IAbacatePayWebhookNormalizer` + `AbacatePayWebhookNormalizer` (suporte a `transparent.completed|refunded|disputed|lost`, decisoes de mapeamento documentadas via `MapEvent`).
+- 2-B.4 — `ProviderWebhookRequest` estendido com `ProviderAccountId` e `WebhookSecret` (init-only, backward-compatible). `AbacatePayProviderAdapter.ParseWebhookAsync` reescrito para consumir verifier + normalizer com 4 categorias de erro controlado; nem secret, nem signature, nem raw body aparecem em `ErrorMessage`.
+- 2-B.5 — `ProcessWebhookEventHandler` carrega `ProviderAccount` por `(tenantId, applicationId, providerCode)` via `metadata.{tenantId,applicationId,paymentId}` do payload (sem varrer tenants). Desprotege `EncryptedCredentials` via `ICredentialProtector`, extrai `webhookSecret` (preferindo campo `webhookSecret`, caindo para `secret` legacy). ProviderAccount/secret nao-AbacatePay seguem caminho legacy sem exigir HMAC. `WebhookEvent` nao persiste secret, apiKey, body.
+- 2-B.6 — `ProviderWebhooksController` faz fail-fast 401 para `AbacatePay` sem `X-Webhook-Signature` (case-insensitive); aceita tambem `X-Provider-Signature` legacy; AbacatePay tem preferencia quando ambos chegam; outros providers preservam comportamento. Headers raw sao lidos via `[FromHeader]`. Handler nunca e chamado para AbacatePay sem assinatura.
+- 2-B.7 — Documentacao final fechada: `docs/specs/006-provider-webhooks.md`, `docs/specs/008-provider-adapters.md` e `docs/specs/011-security-and-compliance.md` atualizadas; `docs/roadmap/001-development-timeline.md` (Phase 2 → IMPLEMENTED), `docs/roadmap/002-phase-status-board.md` (Phase 2 IMPLEMENTED, Phase 3 IMPLEMENTING, gap P2-1 resolvido); `docs/harness/validation-matrix.md` (16 linhas Phase 2/2-B); `docs/harness/learnings.md` (entrada nova com 9 recomendacoes); `feature_list.md` (PH-SEC-002 → Concluido; PH-PROVIDER-WEBHOOK-ABACATEPAY novo); `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md` criado com 5 Q&A respondidas.
+
+Validacao final (2026-06-29):
+
+- `dotnet build PaymentHub.slnx` → 0 errors / 0 warnings (9 projetos).
+- `dotnet test --filter "FullyQualifiedName~AbacatePay"` → 125 passed.
+- `dotnet test --filter "FullyQualifiedName~Webhook"` → 193 passed.
+- `dotnet test --filter "FullyQualifiedName~Provider"` → 135 passed.
+- `dotnet test PaymentHub.slnx` → 418 passed (suite completa).
+- `scripts/agent-architecture-check.sh` → Architecture check passed.
+- `scripts/agent-docs-check.sh` → Docs check passed.
+- `scripts/agent-smoke.sh` → Agent smoke checks passed (build + docker compose config).
+- `git diff --check` → limpo.
+
+Arquivos tocados:
+
+- `src/PaymentHub.Application/Abstractions/Providers/ProviderModels.cs` (+ `WebhookSecret` e `ProviderAccountId`).
+- `src/PaymentHub.Infrastructure.Providers/AbacatePay/AbacatePayProviderAdapter.cs` (ass + verifier + normalizer; `ParseWebhookAsync` reescrito).
+- `src/PaymentHub.Infrastructure.Providers/ProvidersServiceCollectionExtensions.cs` (DI dos webhooks services).
+- `src/PaymentHub.Infrastructure.Providers/AbacatePay/Webhooks/*` (novo pacote: 6 arquivos).
+- `src/PaymentHub.Infrastructure.Providers/AbacatePay/Models/AbacatePayWebhookEnvelope.cs` + `Models/AbacatePayTransparentWebhookData.cs` (novos).
+- `src/PaymentHub.Application/Webhooks/WebhookHandlers.cs` (ResolveAbacatePayWebhookSecretAsync + metadata routing + sanitizacao).
+- `src/PaymentHub.Api/Controllers/ProviderWebhooksController.cs` (fail-fast 401 para AbacatePay).
+- `tests/PaymentHub.UnitTests/Application/ProcessWebhookEventHandlerTests.cs` (construtor atualizado).
+- `tests/PaymentHub.UnitTests/Application/ProcessWebhookEventHandlerAbacatePayTests.cs` (novo, 9 testes).
+- `tests/PaymentHub.UnitTests/Infrastructure/Providers/AbacatePay/AbacatePayProviderAdapterWebhookTests.cs` (novo, 18 testes).
+- `tests/PaymentHub.UnitTests/Infrastructure/Providers/AbacatePay/AbacatePayProviderAdapterTests.cs` (construtor + 1 teste legacy de parse).
+- `tests/PaymentHub.UnitTests/Infrastructure/Providers/AbacatePay/Webhooks/*` (novo, 10 + 14 testes).
+- `tests/PaymentHub.UnitTests/Api/ProviderWebhooksControllerTests.cs` (novo, 9 testes).
+- `docs/specs/006-provider-webhooks.md` (nova secao AbacatePay HMAC).
+- `docs/specs/008-provider-adapters.md` (nova sub-secao 2-B).
+- `docs/specs/011-security-and-compliance.md` (nova secao HMAC externo AbacatePay).
+- `docs/roadmap/001-development-timeline.md` (Phase 2 IMPLEMENTED).
+- `docs/roadmap/002-phase-status-board.md` (Phase 2 IMPLEMENTED, Phase 3 IMPLEMENTING, gap P2-1 resolvido).
+- `docs/harness/validation-matrix.md` (16 linhas Phase 2/2-B).
+- `docs/harness/learnings.md` (entrada nova com 9 recomendacoes).
+- `feature_list.md` (PH-SEC-002 → Concluido; PH-PROVIDER-WEBHOOK-ABACATEPAY novo).
+- `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md` (novo, 5 Q&A respondidas).
+
+Riscos residuais / fora-de-escopo:
+
+- Validacao HMAC completa fica no `ProcessWebhookEventHandler` + adapter (apos resolucao de `ProviderAccount`). Controller faz fail-fast so para header ausente (decisao documentada em 2-B.6 para evitar dupla-resolucao).
+- Adapters de Stripe/MercadoPago permanecem skeletons; quando evoluirem, copiar o padrao de 2-B.4/2-B.5 + adicionar verificacao HMAC especifica no controller e no router.
+- Front-end de dashboard de registro de webhooks (criacao via `POST /webhooks/create`) nao foi implementado nesta fatia.
+- Multi-instancia: handler atual NAO usa `FOR UPDATE SKIP LOCKED` em `WebhookEvent` (modelo single-instance). Enderecado em Slice 7-IT multi-instancia.
+
+Proximo slice recomendado:
+
+- **Slice 2-C** ou **Slice 3-IT** (testes end-to-end com WebApplicationFactory apontando para Postgres real).
+
+## Discovery
+
+### Estado atual do endpoint de webhooks externos
+
+- Endpoint existente: `POST /api/v1/webhooks/{providerCode}`.
+- `ApiKeyAuthenticationMiddleware` libera `/api/v1/webhooks/` sem API Key de `ApplicationClient`.
+- `ProviderWebhooksController` ja le raw body com `Request.EnableBuffering()` e `StreamReader`, tenta inferir `eventType` e chama `IReceiveProviderWebhookHandler`.
+- Assinatura externa hoje e apenas recebida pelo header generico `X-Provider-Signature`; nao ha validacao real.
+- Para AbacatePay, a documentacao atual usa `X-Webhook-Signature`. O endpoint deve aceitar esse header e validar antes de persistir efeitos.
+
+### Estado atual de Inbox/Outbox
+
+- `ReceiveProviderWebhookHandler` persiste `WebhookEvent` e deduplica por `providerCode + providerEventId` quando o event id existe.
+- `ProcessWebhookEventHandler` processa via Worker: resolve adapter, chama `ParseWebhookAsync`, localiza `Payment`, aplica status canonico, registra `PaymentAttempt` e cria `OutboxEvent` quando ha mudanca de status.
+- `WebhookEvent.Signature` existe e pode persistir assinatura em claro. Para AbacatePay, preferir validar e nao persistir assinatura se nao for necessaria para reprocessamento.
+- `OutboxEvent` ja segue o padrao do Slice 7-A e o dispatcher interno real notifica `ApplicationClient` via Worker.
+
+### Contrato atual da AbacatePay
+
+- Documentacao consultada no discovery: `https://docs.abacatepay.com/llms.txt`, `https://docs.abacatepay.com/pages/webhooks`, `https://docs.abacatepay.com/pages/webhooks/reference`, `https://docs.abacatepay.com/pages/webhooks/create`, `https://docs.abacatepay.com/pages/transparents/reference` e `https://docs.abacatepay.com/pages/transparents/check`.
+- Header de assinatura documentado: `X-Webhook-Signature`.
+- Algoritmo: HMAC-SHA256.
+- Conteudo assinado: raw body UTF-8, sem reserializar JSON.
+- Formato da assinatura: base64.
+- Payload v2 base: `{ id, event, apiVersion, devMode, data }`.
+- Eventos `transparent.*` documentados: `transparent.completed`, `transparent.refunded`, `transparent.disputed`, `transparent.lost`.
+- `transparent.expired` nao apareceu na referencia atual; registrar como gap se nao houver outra fonte.
+
+### Estrategia de assinatura HMAC
+
+- Criar `IAbacatePayWebhookSignatureVerifier` e `AbacatePayWebhookSignatureVerifier`, preferencialmente em `PaymentHub.Infrastructure.Providers/AbacatePay/`.
+- Verificar HMAC-SHA256 base64 sobre o raw body exatamente recebido.
+- Usar comparacao constant-time (`CryptographicOperations.FixedTimeEquals`).
+- Rejeitar assinatura ausente, invalida ou base64 invalido sem exception nao tratada e sem leak de segredo.
+- Divergencia da doc: o exemplo chama a chave de `ABACATEPAY_PUBLIC_KEY`, mas a API de criacao de webhook exige `secret`; decisao planejada: usar o `secret` configurado no webhook, armazenado em `ProviderAccount.EncryptedCredentials`.
+
+### Estrategia de idempotencia
+
+- Chave preferencial: `providerCode + eventId`, com `eventId = payload.id`.
+- Duplicata deve retornar 2xx e nao reprocessar efeitos colaterais.
+- Para AbacatePay v2, payload sem `id` deve ser tratado como payload invalido ou gap explicito; nao usar hash de payload como unica chave quando `id` deveria existir.
+
+### Estrategia de normalizacao
+
+- Criar modelos minimos de webhook AbacatePay, por exemplo `AbacatePayWebhookEnvelope`, `AbacatePayTransparentWebhookData` e `AbacatePayWebhookMetadata`.
+- Extrair apenas campos necessarios: `eventId`, `eventType`, `providerPaymentId`, `providerStatus`, `amount`, `occurredAt`, `tenantId`, `applicationId`, `paymentId` e `externalReference` quando presentes.
+- Nao modelar toda a API AbacatePay.
+- Eventos planejados: `transparent.completed`, `transparent.refunded`, `transparent.disputed` e `transparent.lost`.
+- Mapeamento planejado: `completed -> Approved`, `refunded -> Refunded`, `disputed -> Pending` ou `Chargeback` conforme decisao documentada no teste/spec, `lost -> Chargeback` ou `Failed` conforme decisao documentada.
+- Se `event` e `data.status` divergirem, preferir status explicito reconhecido quando seguro; divergencia desconhecida vira erro controlado ou status conservador documentado.
+
+### Arquivos previstos
+
+- `src/PaymentHub.Api/Controllers/ProviderWebhooksController.cs`.
+- `src/PaymentHub.Application/Webhooks/WebhookHandlers.cs`.
+- `src/PaymentHub.Application/Abstractions/Providers/ProviderModels.cs` se o resultado de parse precisar carregar dados normalizados extras.
+- `src/PaymentHub.Infrastructure.Providers/AbacatePay/AbacatePayProviderAdapter.cs`.
+- `src/PaymentHub.Infrastructure.Providers/AbacatePay/AbacatePayOptions.cs` se configurar `WebhookSignatureHeader` fizer sentido.
+- `src/PaymentHub.Infrastructure.Providers/AbacatePay/Models/*`.
+- `src/PaymentHub.Infrastructure.Providers/ProvidersServiceCollectionExtensions.cs` para registrar verifier/normalizer.
+- `tests/PaymentHub.UnitTests/Infrastructure/Providers/AbacatePay/*`.
+- `tests/PaymentHub.UnitTests/Application/ProcessWebhookEventHandlerTests.cs` e/ou testes novos para receive/endpoint.
+- `tests/PaymentHub.IntegrationTests/*` se couber um fluxo minimo com Postgres.
+- Docs/specs/roadmap/report do slice: specs 006/007/008/011, roadmap 001/002, validation matrix, learnings se houver aprendizado reutilizavel, e `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-27.md`.
+
+### Testes previstos
+
+- Signature verifier: assinatura valida aceita; invalida rejeita; body alterado invalida; ausente rejeita; base64 invalido rejeita sem exception nao tratada; mensagem nao vaza secret.
+- Parser/normalizer: `transparent.completed`, `transparent.refunded`, `transparent.disputed`, `transparent.lost`, evento desconhecido, JSON malformado, metadata e providerPaymentId extraidos.
+- Endpoint/handler: assinatura valida retorna 2xx; assinatura invalida retorna 401/400; raw body e usado; duplicata retorna 2xx; payload malformado retorna 400; evento desconhecido segue politica documentada.
+- Inbox/Outbox: evento novo cria `WebhookEvent`; duplicata nao gera efeito duplicado; evento aprovado atualiza `Payment`/`PaymentAttempt`; evento aprovado cria `OutboxEvent`; evento sem payment vira erro controlado sem Outbox.
+- Regressao: filtros `AbacatePay`, `Webhook`, `Inbox`, `Outbox` e integracao Postgres do Slice 1-IT.
+
+### Riscos e decisoes abertas
+
+- Para obter o secret antes de validar HMAC, sera necessario usar metadata ou providerPaymentId do payload apenas como roteamento nao confiavel; nenhum efeito colateral deve ocorrer antes da validacao.
+- `ProviderAccount.EncryptedCredentials` hoje armazena `{ apiKey, secret }`; para este slice, tratar `secret` como webhook secret AbacatePay. Futuro: aceitar campo explicito `webhookSecret` sem quebrar o formato existente.
+- Sem timestamp documentado pela AbacatePay, anti-replay completo fica limitado a idempotencia por `eventId`.
+- `transparent.lost` existe na referencia atual; incluir se couber no slice e registrar decisao de mapeamento. `transparent.expired` nao foi confirmado.
+- Evitar persistir assinatura HMAC em claro em Inbox/Outbox. Raw body pode ser persistido como Inbox se nao contiver secrets; nao persistir API key, webhook secret ou assinatura.
+- Nao alterar dispatcher interno do Slice 7-A salvo ajuste minimo e justificado.
 
 ## Historico
 

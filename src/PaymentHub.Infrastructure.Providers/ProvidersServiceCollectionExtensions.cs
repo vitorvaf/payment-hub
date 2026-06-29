@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PaymentHub.Application.Abstractions.Providers;
 using PaymentHub.Infrastructure.Providers.AbacatePay;
+using PaymentHub.Infrastructure.Providers.AbacatePay.Webhooks;
 using PaymentHub.Infrastructure.Providers.Fake;
 using PaymentHub.Infrastructure.Providers.MercadoPago;
 using PaymentHub.Infrastructure.Providers.Routing;
@@ -38,6 +39,11 @@ public static class ProvidersServiceCollectionExtensions
         // both stay Singleton — no captive-dependency risk.
         services.AddSingleton<IAbacatePayClient, AbacatePayClient>();
         services.AddSingleton<IPaymentProviderAdapter, AbacatePayProviderAdapter>();
+
+        // Slice 2-B: HMAC webhook signature verifier + event normalizer.
+        // Both are pure: zero side-effects, deterministic, single-threaded.
+        services.AddSingleton<IAbacatePayWebhookSignatureVerifier, HmacAbacatePayWebhookSignatureVerifier>();
+        services.AddSingleton<IAbacatePayWebhookNormalizer, AbacatePayWebhookNormalizer>();
 
         // Other providers remain skeleton for now.
         services.AddSingleton<IPaymentProviderAdapter, FakePaymentProviderAdapter>();

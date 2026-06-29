@@ -1,9 +1,11 @@
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PaymentHub.Application.Abstractions.Context;
 using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Abstractions.Providers;
+using PaymentHub.Application.Abstractions.Security;
 using PaymentHub.Application.Webhooks;
 using PaymentHub.Domain.Entities;
 using PaymentHub.Domain.Enums;
@@ -13,6 +15,37 @@ namespace PaymentHub.UnitTests.Application;
 
 public class ProcessWebhookEventHandlerTests
 {
+    private static (Mock<IProviderAccountRepository> providerAccounts, Mock<ICredentialProtector> credentialProtector)
+        BuildProviderAccountMocks()
+    {
+        var providerAccounts = new Mock<IProviderAccountRepository>(MockBehavior.Strict);
+        providerAccounts
+            .Setup(r => r.GetByCodeAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<ProviderCode>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderAccount?)null);
+        var credentialProtector = new Mock<ICredentialProtector>();
+        return (providerAccounts, credentialProtector);
+    }
+
+    private static ProcessWebhookEventHandler BuildHandler(
+        Mock<IWebhookEventRepository> webhooks,
+        Mock<IPaymentRepository> payments,
+        Mock<IProviderAccountRepository> providerAccounts,
+        Mock<ICredentialProtector> credentialProtector,
+        Mock<IPaymentProviderRouter> router,
+        Mock<IOutboxPublisher> outbox,
+        Mock<IUnitOfWork> uow,
+        Mock<IClock> clock)
+        => new(
+            webhooks.Object,
+            payments.Object,
+            providerAccounts.Object,
+            credentialProtector.Object,
+            router.Object,
+            outbox.Object,
+            uow.Object,
+            clock.Object,
+            NullLogger<ProcessWebhookEventHandler>.Instance);
+
     [Fact]
     public async Task ProcessAsync_ShouldMarkProcessedAndEmitOutboxOnStatusChange()
     {
@@ -70,8 +103,11 @@ public class ProcessWebhookEventHandlerTests
         var router = new Mock<IPaymentProviderRouter>();
         router.Setup(r => r.Resolve("Fake")).Returns(adapter.Object);
 
-        var handler = new ProcessWebhookEventHandler(
-            webhooks.Object, payments.Object, router.Object, outbox.Object, uow.Object, clock.Object);
+        var (providerAccounts, credentialProtector) = BuildProviderAccountMocks();
+
+        var handler = BuildHandler(
+            webhooks, payments, providerAccounts, credentialProtector,
+            router, outbox, uow, clock);
 
         await handler.ProcessAsync(webhookId, CancellationToken.None);
 
@@ -130,8 +166,11 @@ public class ProcessWebhookEventHandlerTests
         var router = new Mock<IPaymentProviderRouter>();
         router.Setup(r => r.Resolve("Fake")).Returns(adapter.Object);
 
-        var handler = new ProcessWebhookEventHandler(
-            webhooks.Object, payments.Object, router.Object, outbox.Object, uow.Object, clock.Object);
+        var (providerAccounts, credentialProtector) = BuildProviderAccountMocks();
+
+        var handler = BuildHandler(
+            webhooks, payments, providerAccounts, credentialProtector,
+            router, outbox, uow, clock);
 
         await handler.ProcessAsync(webhookId, CancellationToken.None);
 
@@ -210,8 +249,11 @@ public class ProcessWebhookEventHandlerTests
         var router = new Mock<IPaymentProviderRouter>();
         router.Setup(r => r.Resolve("Fake")).Returns(adapter.Object);
 
-        var handler = new ProcessWebhookEventHandler(
-            webhooks.Object, payments.Object, router.Object, outbox.Object, uow.Object, clock.Object);
+        var (providerAccounts, credentialProtector) = BuildProviderAccountMocks();
+
+        var handler = BuildHandler(
+            webhooks, payments, providerAccounts, credentialProtector,
+            router, outbox, uow, clock);
 
         await handler.ProcessAsync(webhookId, CancellationToken.None);
 
@@ -282,8 +324,11 @@ public class ProcessWebhookEventHandlerTests
         var router = new Mock<IPaymentProviderRouter>();
         router.Setup(r => r.Resolve("Fake")).Returns(adapter.Object);
 
-        var handler = new ProcessWebhookEventHandler(
-            webhooks.Object, payments.Object, router.Object, outbox.Object, uow.Object, clock.Object);
+        var (providerAccounts, credentialProtector) = BuildProviderAccountMocks();
+
+        var handler = BuildHandler(
+            webhooks, payments, providerAccounts, credentialProtector,
+            router, outbox, uow, clock);
 
         await handler.ProcessAsync(webhookId, CancellationToken.None);
 

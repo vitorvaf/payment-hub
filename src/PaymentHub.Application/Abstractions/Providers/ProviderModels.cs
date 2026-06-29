@@ -63,7 +63,24 @@ public sealed record CreateCheckoutProviderResult(
 public sealed record ProviderWebhookRequest(
     string RawBody,
     string? Signature,
-    IReadOnlyDictionary<string, string> Headers);
+    IReadOnlyDictionary<string, string> Headers)
+{
+    /// <summary>
+    /// Resolved <c>ProviderAccount.Id</c>. Populated by the worker layer
+    /// (e.g. <c>ProcessWebhookEventHandler</c>) when there is a definite
+    /// tenant/application mapping for the inbound event. Null when the
+    /// adapter does not need account-level context.
+    /// </summary>
+    public Guid? ProviderAccountId { get; init; }
+
+    /// <summary>
+    /// Resolved webhook secret (already in clear text — used for HMAC
+    /// verification). Already protected in the database; this is the value
+    /// unprotect-loaded by the handler. Transient: never persisted by
+    /// the adapter or returned in any error message.
+    /// </summary>
+    public string? WebhookSecret { get; init; }
+}
 
 public sealed record ProviderWebhookParseResult(
     bool IsValid,

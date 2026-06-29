@@ -19,8 +19,8 @@ Legenda de prioridade:
 |-------|-------|---------|-----------|---------|-------|--------|-------------|
 | 1 | Phase 0 | Produto, arquitetura e fronteiras | P0 | M | LOW | `IMPLEMENTED` | — |
 | 2 | Phase 1 | Core domain MVP e API | P0 | L | MEDIUM | `IMPLEMENTED` | Phase 0 |
-| 3 | Phase 2 | Primeiro adapter de provider (AbacatePay) | P0 | M | MEDIUM | `IMPLEMENTING` (Slice 2-A CONCLUIDO 2026-06-27) | Phase 1 |
-| 4 | Phase 3 | Webhooks externos e internos | P0 | M | MEDIUM | `IMPLEMENTING` | Phase 1 |
+| 3 | Phase 2 | Primeiro adapter de provider (AbacatePay) | P0 | M | MEDIUM | `IMPLEMENTED` (Slice 2-A CONCLUIDO 2026-06-27; Slice 2-B CONCLUIDO 2026-06-29) | Phase 1 |
+| 4 | Phase 3 | Webhooks externos e internos | P0 | M | MEDIUM | `IMPLEMENTING` (Slice 7-A CONCLUIDO 2026-06-26; Slice 2-B CONCLUIDO 2026-06-29 completa webhooks externos AbacatePay) | Phase 1 |
 | 5 | Phase 7 | Workers, Outbox e processamento assincrono | P1 | M | MEDIUM | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-26; base de integracao entregue 2026-06-26 via Slice 1-IT) | Phase 3, Phase 6 |
 | 6 | Phase 6 | Seguranca e confiabilidade | P1 | M | HIGH | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-25) | Phase 1 |
 | 7 | Phase 4 | Multi-provider (Stripe + MercadoPago) | P1 | L | MEDIUM | `SPEC_DRAFTED` | Phase 2, Phase 3 |
@@ -84,6 +84,7 @@ Com base no estado atual (`IMPLEMENTING` em Phases 2, 3, 6, 7) e nos achados P1 
 5. **Slice 6-D**: Politica de bootstrap/admin seed. `[CONCLUIDO 2026-06-18]`
 6. **Slice 1-IT**: Criar primeira fixture de integracao com Postgres (migrations + indices). `[CONCLUIDO 2026-06-26]`
 7. **Slice 2-A**: Implementar adapter AbacatePay funcional com validacao de assinatura de webhook. `[CONCLUIDO 2026-06-27 — client HTTP com Bearer Token, mapper estendido, Adapter refatorado, DI/options/HttpClient registrados, 57 testes AbacatePay + 348 totais, arquitetura/docs-checks verdes; webhooks externos/HMAC ficam em Slice 2-B]`
+8. **Slice 2-B**: Webhooks externos AbacatePay com HMAC-SHA256 (Base64) + normalizacao de eventos `transparent.*` + fail-fast no controller + roteamento por metadata no handler. `[CONCLUIDO 2026-06-29 — 9 testes adapter + 14 testes normalizer + 10 testes verifier + 9 testes handler AbacatePay + 9 testes controller + 418 totais; arquitetura/docs-checks verdes]`
 
 ## Slices concluidos apos a geracao inicial (2026-06-26)
 

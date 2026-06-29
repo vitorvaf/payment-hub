@@ -52,7 +52,7 @@ Consolidar regras de seguranca obrigatorias para o MVP.
 | Provider credentials | JSON protegido por criptografia |
 | Application webhook secret | `webhook_secret` persistido como blob cifrado (AES-CBC, chave em `PaymentHub:WebhookSecretEncryptionKey`). Cru apenas em memoria no ponto de assinatura HMAC |
 | Webhook interno | `X-PaymentHub-Signature` HMAC-SHA256 sobre `timestamp.rawBody` |
-| Webhook externo | Assinatura validada quando provider oferecer |
+| Webhook externo (AbacatePay) | `X-Webhook-Signature` HMAC-SHA256(Base64) sobre `rawBody`; segredo compartilhado persistido como `webhookSecret` em `ProviderAccount.EncryptedCredentials` (JSON protegido por AES). Controller rejeita 401 antes de persistir quando header ausente. Worker valida apos resolver `ProviderAccount`. |
 | Logs | correlation id e contexto sem secrets |
 | Tenant/application em endpoints autenticados | Derivado exclusivamente de `ITenantContext` (populado pelo middleware). Body/headers do request nunca podem sobrescrever tenant/application. |
 
@@ -86,6 +86,59 @@ Exemplo C# para gerar hex:
 var signatureBytes = HMACSHA256.HashData(secretBytes, signedPayloadBytes);
 var signature = Convert.ToHexString(signatureBytes).ToLowerInvariant();
 ```
+
+### HMAC de webhook externo — AbacatePay (Slice 2-B — 2026-06-29)
+
+- Algoritmo: `HMAC-SHA256`.
+- Encoding do payload: UTF-8.
+- Formato da assinatura: **Base64**.
+- Header canonico: `X-Webhook-Signature`.
+- Header de fallback: `X-Provider-Signature` (legacy, ainda suportado em AbacatePay).
+- Sem header de timestamp. Replay/duplicate protection vem da coluna `webhook_events.provider_event_id` (idempotencia por `provider_code + provider_event_id`) e da coluna `processing_status` (MarkProcessing).
+- String assinada: `rawBody` (sem timestamp).
+- Tolerancia: nao ha janela — o provider e quem decide quando reenvia. Nos dependemos de idempotencia no Inbox.
+- `rawBody` deve ser o corpo HTTP exatamente como recebido, sem reserializar o JSON.
+
+Exemplo (JS do doc oficial AbacatePay, comecando a ser traduzido em C#):
+
+```text
+rawBody = corpo HTTP exatamente como enviado
+signature = Convert.ToBase64String(HMACSHA256(webhookSecret, UTF8(rawBody)))
+header = "X-Webhook-Signature: <signature>"
+```
+
+Comparacao deve acontecer em **tempo constante** via `CryptographicOperations.FixedTimeEquals(byte[], byte[])`. Mensagens de erro NAO podem vazar:
+- `webhookSecret` (raw ou Base64).
+- A assinatura recebida.
+- O `rawBody` completo.
+- A `apiKey` do `ProviderAccount.EncryptedCredentials`.
+- Stack traces.
+
+Pipeline por camadas (controller + handler + adapter):
+
+- **Controller** (`ProviderWebhooksController.Receive`):
+  - Le `[FromHeader(Name = "X-Webhook-Signature")] string? abacateSignature` e `[FromHeader(Name = "X-Provider-Signature")] string? legacySignature`.
+  - Seleciona `X-Webhook-Signature` quando ambos chegam.
+  - Quando `providerCode == "AbacatePay"` (case-insensitive) e o header de assinatura esta ausente ou branco, retorna `401 Unauthorized { error = "missing_signature" }` **sem** gravar `WebhookEvent` nem chamar o handler.
+  - Providers nao-AbacatePay preservam comportamento legacy.
+
+- **Handler** (`ProcessWebhookEventHandler`):
+  - Para `ProviderCode.AbacatePay` resolve o `ProviderAccount` via `IProviderAccountRepository.GetByCodeAsync(tenantId, applicationId, code)`. Roteamento inicial vem de `data.metadata.{tenantId, applicationId, paymentId}` do payload bruto (parsing tolerante, sem tentativas amplas).
+  - Desprotege `EncryptedCredentials` via `ICredentialProtector.Unprotect`. Extrai `webhookSecret` (preferindo campo explicito, caindo para `secret` legacy).
+  - Passa o segredo ao adapter via `ProviderWebhookRequest.WebhookSecret` (init-only). O segredo NAO e persistido em `WebhookEvent`, NAO e logado, NAO aparece em `LastError`.
+  - Quando o `ProviderAccount` ou o pagamento nao podem ser resolvidos, marca o evento como `Failed` com `LastError` categorizado e seguro.
+  - Quando o adapter diz `IsValid=false`, marca como `Failed` com `LastError` sanitize-ado (remove quebras de linha, NULs, cap em 2000 chars).
+
+- **Adapter** (`AbacatePayProviderAdapter.ParseWebhookAsync`):
+  - Recusa silencioosamente quando `WebhookSecret` ou `Signature` estao ausentes.
+  - Verifica HMAC via `IAbacatePayWebhookSignatureVerifier`. Categorias: `None`, `MissingSignature`, `MalformedSignature`, `MissingSecret`, `SignatureMismatch`.
+  - Normaliza via `IAbacatePayWebhookNormalizer` (eventos `transparent.completed|refunded|disputed|lost`).
+  - Mapeia `PaymentStatus` canonico via `MapEvent` (decisoes documentadas em teste).
+  - Em qualquer falha, `ProviderWebhookParseResult.IsValid=false`, `ErrorMessage` categorizado.
+
+#### Falha de HMAC e seguranca da mensagem
+
+`AbacatePayClientException` e `AbacatePayWebhookClientException` NAO carregam o segredo nem o body bruto. Mesma politica aplicada em todo o pipeline. `.LastError` no banco (coluna `webhook_events.last_error`) nunca tera mais de 2000 caracteres, sem quebra de linha, sem NUL, sem stack.
 
 ### Protecao de `ApplicationClient.WebhookSecret` em repouso
 
@@ -327,6 +380,8 @@ Mantido conforme contrato existente (vide secao "HMAC de webhook interno" acima)
 - WebhookUrl IPv4-mapped IPv4 loopback (`::ffff:127.0.0.1`) rejeitada.
 - WebhookUrl malformada rejeitada.
 - WebhookUrl HTTP loopback aceita somente em Development.
+- HMAC AbacatePay: valido/invalido, secret ausente, header ausente, base64 malformado, body adulterado, body malformado, evento unsupported, metadata ausente, secret nao-AbacatePay preserva caminho legacy.
+- Nenhum teste loga ou persiste `webhookSecret`, `apiKey`, signature recebida, raw body completo ou stack trace.
 
 ## Arquivos relacionados
 
@@ -334,3 +389,5 @@ Mantido conforme contrato existente (vide secao "HMAC de webhook interno" acima)
 - `.github/instructions/security.instructions.md`
 - `src/PaymentHub.Infrastructure.Postgres/Security/`
 - `src/PaymentHub.Worker/OutboxDispatcherWorker.cs`
+- `src/PaymentHub.Infrastructure.Providers/AbacatePay/Webhooks/*`
+- `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md`

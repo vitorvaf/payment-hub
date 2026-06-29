@@ -52,6 +52,20 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | 2 | AbacatePay | Docs | `scripts/agent-docs-check.sh` | harness e OpenCode integros | Passou | `PASS` | 2026-06-27 (Slice 2-A) |
 | 2 | AbacatePay | Diff | `git diff --check` | Sem warnings | Sem warnings | `PASS` | 2026-06-27 (Slice 2-A) |
 | 2 | AbacatePay | Sandbox end-to-end | Webhook AbacatePay sandbox real (chave de fato) | Status canonico via HMAC | NAO executado neste slice: webhooks externos completos foram para Slice 2-B. Cobertura de mapper e status cobre o dominio sem chamada externa real. | `SKIPPED` | 2026-06-27 (Slice 2-B pendente) |
+| 2 | 2-B | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings em 9 projetos | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Full Suite | `dotnet test PaymentHub.slnx` | >= 418 testes (348 Slice 2-A baseline + 70 novos do Slice 2-B), zero regressao | 418 passando | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | AbacatePay Coverage | `dotnet test --filter "FullyQualifiedName~AbacatePay"` | HMAC verifier + normalizer + adapter + handler | 125 passando | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Webhook Coverage | `dotnet test --filter "FullyQualifiedName~Webhook"` | Handler + controller + adapter passam | 193 passando | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Provider Coverage | `dotnet test --filter "FullyQualifiedName~Provider"` | Fake/Stripe/MercadoPago + AbacatePay intactos | 135 passando | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | HMAC Failure Path | Adapter retorna `IsValid=false` quando body adulterado | Teste passa | Passou (5 cenarios: signature mismatch, tampered body, malformed base64, missing secret, missing header) | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Normalizer Failure Path | Payload vazio/malformed/null/unsupported retorna invalid | Teste passa | Passou (5 cenarios) | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Provider Account Routing | Handler resolve ProviderAccount por (tenantId, applicationId) e desprotege webhookSecret | Teste passa | Passou (3 cenarios: routing feliz, ProviderAccount ausente, credentials sem webhookSecret) | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Fail-Fast 401 | AbacatePay sem `X-Webhook-Signature` retorna 401 antes de persistir | Teste passa | Passou (case-insensitive + fallback `X-Provider-Signature` + prioridade) | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | No Secret Leak | `ErrorMessage`/`LastError`/`OutboxEvent.LastError` NAO contem `webhookSecret`/signature/body bruto | Teste passa | Passou (3 cenarios explicitos + varios implícitos em todos os testes) | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Architecture | `scripts/agent-architecture-check.sh` | Camadas Clean preservadas | Passou | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Docs | `scripts/agent-docs-check.sh` | harness e OpenCode integros | Passou | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Diff | `git diff --check` | Sem warnings | Sem warnings | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Docs | `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md` | Relatorio final + Q1-Q5 respondidas + gaps remanescentes | Criado | `PASS` | 2026-06-29 (Slice 2-B) |
 
 ---
 

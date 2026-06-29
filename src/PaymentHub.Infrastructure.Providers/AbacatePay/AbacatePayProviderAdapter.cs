@@ -4,6 +4,7 @@ using PaymentHub.Application.Abstractions.Providers;
 using PaymentHub.Application.Abstractions.Security;
 using PaymentHub.Domain.Services;
 using PaymentHub.Infrastructure.Providers.AbacatePay.Models;
+using PaymentHub.Infrastructure.Providers.AbacatePay.Webhooks;
 
 namespace PaymentHub.Infrastructure.Providers.AbacatePay;
 
@@ -18,11 +19,19 @@ namespace PaymentHub.Infrastructure.Providers.AbacatePay;
 /// <remarks>
 /// <para>
 /// Credential contract: <c>EncryptedCredentials</c> is the JSON
-/// <c>{ "apiKey": "...", "secret": "..." }</c> blob produced by
-/// <c>RegisterProviderAccountHandler</c> and protected via
-/// <see cref="ICredentialProtector"/>. The adapter unprotects once,
-/// extracts <c>apiKey</c>, and immediately discards the plain JSON. The
-/// API key is NEVER logged, returned, or persisted.
+/// <c>{ "apiKey": "...", "secret": "...", "webhookSecret": "..." }</c>
+/// blob produced by <c>RegisterProviderAccountHandler</c> and protected
+/// via <see cref="ICredentialProtector"/>. The adapter unprotects once,
+/// extracts <c>apiKey</c> (for outbound calls) and relies on
+/// <c>ProcessWebhookEventHandler</c> to extract <c>webhookSecret</c> for
+/// inbound calls (HMAC verification). The plaintext is NEVER logged,
+/// returned, or persisted.
+/// </para>
+/// <para>
+/// For inbound webhook validation (Slice 2-B) the adapter delegates
+/// signature verification to <see cref="IAbacatePayWebhookSignatureVerifier"/>
+/// and payload normalization to <see cref="IAbacatePayWebhookNormalizer"/>.
+/// Both are pure: no I/O, no exceptions for malformed input.
 /// </para>
 /// <para>
 /// Status mapping is delegated to <see cref="PaymentStatusMapper"/> so the
@@ -34,6 +43,8 @@ public sealed class AbacatePayProviderAdapter : IPaymentProviderAdapter
 {
     private readonly IAbacatePayClient _client;
     private readonly ICredentialProtector _protector;
+    private readonly IAbacatePayWebhookSignatureVerifier _signatureVerifier;
+    private readonly IAbacatePayWebhookNormalizer _normalizer;
     private readonly ILogger<AbacatePayProviderAdapter> _logger;
 
     public string ProviderCode => "AbacatePay";
@@ -41,10 +52,14 @@ public sealed class AbacatePayProviderAdapter : IPaymentProviderAdapter
     public AbacatePayProviderAdapter(
         IAbacatePayClient client,
         ICredentialProtector protector,
+        IAbacatePayWebhookSignatureVerifier signatureVerifier,
+        IAbacatePayWebhookNormalizer normalizer,
         ILogger<AbacatePayProviderAdapter> logger)
     {
         _client = client;
         _protector = protector;
+        _signatureVerifier = signatureVerifier;
+        _normalizer = normalizer;
         _logger = logger;
     }
 
@@ -156,54 +171,101 @@ public sealed class AbacatePayProviderAdapter : IPaymentProviderAdapter
             RawResponseJson: rawResponse);
     }
 
+    /// <summary>
+    /// Parse + verify an AbacatePay inbound webhook. Order of checks is
+    /// strict: secret present → signature present → signature valid →
+    /// payload valid. Any failure returns <see cref="ProviderWebhookParseResult.IsValid"/>
+    /// = false with a sanitized <c>ErrorMessage</c> — the secret,
+    /// signature, and raw body are NEVER included.
+    /// </summary>
     public Task<ProviderWebhookParseResult> ParseWebhookAsync(
         ProviderWebhookRequest request,
         CancellationToken cancellationToken)
     {
-        // Full webhook HMAC verification + event normalization ships in Slice 2-B.
-        // For this slice we keep the existing JSON-shape parsing so the
-        // scaffolding contract does not regress while the adapter evolves.
-        try
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // 1. secret must be present (worker layer responsibility). If the
+        //    ProviderAccount was not resolved or has no webhookSecret we
+        //    refuse to parse — better to dead-letter the event than to
+        //    process an unsigned webhook.
+        if (string.IsNullOrEmpty(request.WebhookSecret))
         {
-            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(request.RawBody) ? "{}" : request.RawBody);
-            var root = doc.RootElement;
-
-            var providerPaymentId = TryGetString(root, "data", "id") ?? TryGetString(root, "id");
-            var eventType = TryGetString(root, "event") ?? "payment.updated";
-            var providerStatus = TryGetString(root, "data", "status") ?? eventType;
-            var providerEventId = TryGetString(root, "id");
-
-            if (string.IsNullOrWhiteSpace(providerPaymentId))
-            {
-                return Task.FromResult(new ProviderWebhookParseResult(
-                    IsValid: false,
-                    ProviderEventId: providerEventId,
-                    EventType: eventType,
-                    ProviderPaymentId: null,
-                    ProviderStatus: providerStatus,
-                    ErrorMessage: "Missing provider payment id"));
-            }
-
-            return Task.FromResult(new ProviderWebhookParseResult(
-                IsValid: true,
-                ProviderEventId: providerEventId,
-                EventType: eventType,
-                ProviderPaymentId: providerPaymentId,
-                ProviderStatus: providerStatus,
-                ErrorMessage: null,
-                RawPayloadJson: request.RawBody));
+            _logger.LogWarning(
+                "AbacatePay webhook rejected: webhookSecret is missing for providerCode='{ProviderCode}'.",
+                ProviderCode);
+            return Task.FromResult(Invalid(
+                eventType: "unknown",
+                providerEventId: null,
+                error: "AbacatePay webhook secret is missing."));
         }
-        catch (JsonException ex)
+
+        // 2. signature header must be present (controller should have
+        //    failed-fast already, but defense in depth).
+        if (string.IsNullOrWhiteSpace(request.Signature))
         {
+            _logger.LogWarning(
+                "AbacatePay webhook rejected: signature header is missing.");
+            return Task.FromResult(Invalid(
+                eventType: "unknown",
+                providerEventId: null,
+                error: "AbacatePay webhook signature is missing."));
+        }
+
+        // 3. signature must verify against the secret.
+        var signatureFailure = _signatureVerifier.Verify(
+            request.RawBody,
+            request.Signature,
+            request.WebhookSecret);
+        if (signatureFailure != AbacatePayWebhookSignatureFailure.None)
+        {
+            _logger.LogWarning(
+                "AbacatePay webhook rejected: signature verification failed category={Category} providerAccountId={ProviderAccountId}.",
+                signatureFailure, request.ProviderAccountId);
+            return Task.FromResult(Invalid(
+                eventType: "unknown",
+                providerEventId: null,
+                error: $"AbacatePay webhook signature invalid ({signatureFailure})."));
+        }
+
+        // 4. payload must parse + map to a supported event.
+        var normalized = _normalizer.Normalize(request.RawBody);
+        if (!normalized.IsValid)
+        {
+            _logger.LogWarning(
+                "AbacatePay webhook rejected: payload normalization failed reason={Reason} providerAccountId={ProviderAccountId}.",
+                normalized.ErrorMessage, request.ProviderAccountId);
             return Task.FromResult(new ProviderWebhookParseResult(
                 IsValid: false,
-                ProviderEventId: null,
-                EventType: "unknown",
-                ProviderPaymentId: null,
-                ProviderStatus: null,
-                ErrorMessage: ex.Message));
+                ProviderEventId: normalized.EventId,
+                EventType: normalized.EventType,
+                ProviderPaymentId: normalized.ProviderPaymentId,
+                ProviderStatus: normalized.ProviderStatus,
+                ErrorMessage: normalized.ErrorMessage,
+                RawPayloadJson: normalized.RawPayloadJson));
         }
+
+        return Task.FromResult(new ProviderWebhookParseResult(
+            IsValid: true,
+            ProviderEventId: normalized.EventId,
+            EventType: normalized.EventType,
+            ProviderPaymentId: normalized.ProviderPaymentId,
+            ProviderStatus: normalized.ProviderStatus,
+            ErrorMessage: null,
+            RawPayloadJson: normalized.RawPayloadJson));
     }
+
+    private static ProviderWebhookParseResult Invalid(
+        string eventType,
+        string? providerEventId,
+        string error) =>
+        new(
+            IsValid: false,
+            ProviderEventId: providerEventId,
+            EventType: eventType,
+            ProviderPaymentId: null,
+            ProviderStatus: null,
+            ErrorMessage: error,
+            RawPayloadJson: null);
 
     private static AbacatePayCustomerRequest? BuildCustomer(CreateCheckoutProviderRequest request)
     {

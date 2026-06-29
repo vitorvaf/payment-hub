@@ -2,6 +2,14 @@ using PaymentHub.Domain.Enums;
 
 namespace PaymentHub.Application.Abstractions.Providers;
 
+/// <summary>
+/// Payload sent from <c>CreateCheckoutHandler</c> to a concrete
+/// <see cref="IPaymentProviderAdapter"/>. The original positional
+/// constructor is preserved for backward compatibility with
+/// <c>FakePaymentProviderAdapter</c> and any existing tests; AbacatePay and
+/// future providers can read the optional init-only properties populated
+/// from the resolved <c>ProviderAccount</c>.
+/// </summary>
 public sealed record CreateCheckoutProviderRequest(
     Guid TenantId,
     Guid ApplicationId,
@@ -14,7 +22,30 @@ public sealed record CreateCheckoutProviderRequest(
     string? SuccessUrl,
     string? CancelUrl,
     string? MetadataJson,
-    IReadOnlyList<ProviderCheckoutItem> Items);
+    IReadOnlyList<ProviderCheckoutItem> Items)
+{
+    /// <summary>
+    /// Id of the resolved <c>ProviderAccount</c>. Null when the adapter does
+    /// not need account-level context (e.g. Fake / Stripe / MercadoPago
+    /// skeletons).
+    /// </summary>
+    public Guid? ProviderAccountId { get; init; }
+
+    /// <summary>
+    /// Resolved <c>ProviderEnvironment</c> as a string. Adapters that
+    /// care about sandbox vs production read this; others may ignore.
+    /// </summary>
+    public string? ProviderEnvironment { get; init; }
+
+    /// <summary>
+    /// AES-protected credentials blob from
+    /// <c>ProviderAccount.EncryptedCredentials</c>. The adapter is the
+    /// only layer allowed to <c>Unprotect</c> it via
+    /// <c>ICredentialProtector</c>. Adapters that do not need credentials
+    /// (Fake / Stripe / MercadoPago skeletons) leave this null.
+    /// </summary>
+    public string? ProtectedCredentials { get; init; }
+}
 
 public sealed record ProviderCheckoutItem(
     string Id,

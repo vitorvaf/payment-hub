@@ -161,7 +161,77 @@ Implementacao:
 - Cobertura de testes: `WebhookUrlValidatorTests` (66 casos expandidos de Theory) e `RegisterApplicationClientValidatorTests` (17 testes). Total adicionado pelo Slice 7-A.5: 80+ testes.
 - Cobre todos os vetores de SSRF mapeados em auditoria M3 (Worker chama `HttpApplicationWebhookDispatcher.DispatchAsync(outboxEvent)` → `client.WebhookUrl` → HTTP POST; qualquer URL privada seria um SSRF direto).
 
-### Dispatcher HTTP real do Outbox (Slice 7-A)
+### Protecao de credenciais AbacatePay em fluxo outbound (Slice 2-A — 2026-06-27)
+
+O Adapter AbacatePay chama a API REST externa a partir de um
+`ProviderAccount` persistido. O contrato de credencial e o mesmo ja
+documentado para webhooks: **raw nunca aparece em log, response,
+DTO, raw response JSON, exception message ou `OutboxEvent.LastError`**.
+O adapter tem camada propria de protecao alem do `ICredentialProtector`
+porque outbound HTTP tem superficie de leak diferente da persistencia:
+
+```text
+persistencia: ProviderAccount.EncryptedCredentials (AES, mesmo padrao do webhook secret)
+uso interno: apiKey desprotegida apenas no header Authorization no momento da chamada HTTP
+resposta/log/exception: nunca expor (nem raw, nem protegida)
+```
+
+Implementacao:
+
+- Interface `IAbacatePayClient` vive em `PaymentHub.Infrastructure.Providers/AbacatePay/`. Recebe `apiKey` como parametro de metodo (nao tem estado portando credencial). Cada metodo (`CreateTransparentPixAsync`, `CheckTransparentPixAsync`, `SimulateTransparentPixPaymentAsync`) recebe a chave explicitamente; o construtor da classe nunca ve credencial.
+- Implementacao `AbacatePayClient` registra um `HttpClient` nomeado `"abacatepay"` via `IHttpClientFactory` em `PaymentHub.Infrastructure.Providers/ProvidersServiceCollectionExtensions.cs:AddHttpClient`. `BaseAddress` deriva de `AbacatePayOptions.BaseUrl`, e `Timeout` de `AbacatePayOptions.TimeoutSeconds`.
+- Header `Authorization: Bearer <api-key>` e setado em `request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey)`. O adapter nao chama `ToString()`, nao loga o header, nao imprime em exception.
+- `ICredentialProtector.Unprotect` e chamado **uma unica vez** no inicio de `AbacatePayProviderAdapter.CreateCheckoutAsync`; o JSON desprotegido (`{ "apiKey": "...", "secret": "..." }`) e descartado apos o `JsonDocument.Parse`. O `apiKey` extraido fica em variavel local e nao e persistido em lugar nenhum.
+
+#### `AbacatePayClientException`: mensagem segura
+
+`AbacatePayClientException` carrega apenas `Category` (enum
+`AbacatePayErrorCategory`), `StatusCode?` (int quando aplicavel) e
+`IsTransient` (bool, default derivado da categoria). Sua mensagem:
+
+```text
+NAO inclui a API key.
+NAO inclui o header Authorization.
+NAO inclui o request body.
+NAO inclui o response body, especialmente brCodeBase64.
+NAO inclui brCode nem customer.name/email mesmo em sucesso.
+Pode incluir o codigo HTTP (e.g. "AbacatePay HTTP 429.").
+Pode incluir a categoria (e.g. "AbacatePay error (RateLimited).").
+```
+
+Categorias e defaults:
+
+| Categoria | Quando | `IsTransient` default |
+|-----------|--------|------------------------|
+| `BadRequest` (1) | HTTP 400 | `false` |
+| `Unauthorized` (2) | HTTP 401/403 | `false` |
+| `NotFound` (3) | HTTP 404 | `false` |
+| `RateLimited` (4) | HTTP 429 | `true` |
+| `ServerError` (5) | HTTP 5xx | `true` |
+| `Network` (6) | `HttpRequestException` | `true` |
+| `Timeout` (7) | `TaskCanceledException` por `HttpClient.Timeout` | `true` |
+| `EnvelopeFailure` (8) | HTTP 2xx com `success=false` ou JSON malformado | `false` |
+| `Unexpected` (9) | catch-all | `false` |
+| `SimulationDisabled` (10) | `SimulateTransparentPixPaymentAsync` com `AllowDevModeSimulation=false` | `false` |
+
+Caller `CancellationToken` cancelado propaga como
+`OperationCanceledException` (nao e envelopado) — distinguindo cancelamento
+do operador de timeout do `HttpClient`.
+
+`AbacatePayProviderAdapter.CreateCheckoutAsync` traduz a exception em
+`CreateCheckoutProviderResult { Success = false, ErrorMessage = "AbacatePay error (Category)." }`. A `ErrorMessage` tambem e segura: contem apenas a categoria enum em texto. O `Payment.RegisterAttempt` recebe a categoria enum via `providerResult.ErrorMessage`, mas o `PaymentAttempt.LastError` NAO armazena a mensagem do client.
+
+#### Simulacao opt-in
+
+`Providers:AbacatePay:AllowDevModeSimulation=true` liga o endpoint
+`POST /transparents/simulate-payment`. Default seguro: **false** em
+`appsettings.json` (production) e so `true` em `appsettings.Development.json`. O `AbacatePayClient.SimulateTransparentPixPaymentAsync` lanca `AbacatePayClientException(SimulationDisabled)` **antes** de montar qualquer HTTP request quando a flag esta desligada — preferencia explicita por "falhar cedo" em vez de enviar sem ciente.
+
+Cobertura de testes do contrato:
+
+- `AbacatePayClientTests` afirma que `Exception.Message` NAO contem a API key, NAO contem `brCodeBase64`, NAO contem o response body bruto, em todos os caminhos de erro (categoria 400/401/403/404/429/5xx, network, timeout, envelope failure, malformed JSON).
+- `AbacatePayProviderAdapterTests` afirma que `CreateCheckoutProviderResult.RawResponseJson` NAO contem a API key, o `Secret`, ou o marker do `FakeCredentialProtector`.
+- Nenhuma chamada externa real e feita em testes: `ScriptedHandler` + `SingleHandlerHttpClientFactory` isolam totalmente o IO.
 
 O Worker dispara webhooks internos para a `WebhookUrl` da `ApplicationClient` apos persistir um `OutboxEvent`. Antes do Slice 7-A, o Worker usava um `NoopApplicationWebhookDispatcher` que marcava eventos como `Sent` sem envio HTTP real (gap P1-4). O dispatcher HTTP real introduzido pelo Slice 7-A tem as seguintes garantias de seguranca:
 

@@ -1,3 +1,4 @@
+using System.Net.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -16,8 +17,30 @@ public static class ProvidersServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.AddSingleton<IPaymentProviderAdapter, FakePaymentProviderAdapter>();
+        // Options binding — section "Providers:AbacatePay". Safe defaults live
+        // in AbacatePayOptions itself; appsettings only override what they want.
+        services.Configure<AbacatePayOptions>(configuration.GetSection(AbacatePayOptions.SectionName));
+
+        // Named HttpClient for AbacatePay. Timeout comes from AbacatePayOptions,
+        // enabling test overrides without touching HttpClient defaults. The
+        // client lifetime is managed by IHttpClientFactory; AbacatePayClient
+        // pulls a fresh client per call so DNS / socket rotation is automatic.
+        services.AddHttpClient(AbacatePayClient.HttpClientName, (sp, http) =>
+        {
+            var optionsMonitor = sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<AbacatePayOptions>>();
+            var opts = optionsMonitor.CurrentValue;
+            http.BaseAddress = new Uri(opts.BaseUrl.TrimEnd('/') + "/");
+            http.Timeout = TimeSpan.FromSeconds(Math.Max(1, opts.TimeoutSeconds));
+        });
+
+        // AbacatePayClient and the concrete adapter only depend on singleton
+        // services (IHttpClientFactory, IOptionsMonitor, ILogger) so they can
+        // both stay Singleton — no captive-dependency risk.
+        services.AddSingleton<IAbacatePayClient, AbacatePayClient>();
         services.AddSingleton<IPaymentProviderAdapter, AbacatePayProviderAdapter>();
+
+        // Other providers remain skeleton for now.
+        services.AddSingleton<IPaymentProviderAdapter, FakePaymentProviderAdapter>();
         services.AddSingleton<IPaymentProviderAdapter, StripeProviderAdapter>();
         services.AddSingleton<IPaymentProviderAdapter, MercadoPagoProviderAdapter>();
 

@@ -51,4 +51,47 @@ public class PaymentStatusMapperTests
         var mapped = PaymentStatusMapper.FromProviderStatus("Unknown", "zzz");
         mapped.Should().Be(PaymentStatus.Pending);
     }
+
+    [Theory]
+    [InlineData("pending", PaymentStatus.Pending)]
+    [InlineData("processing", PaymentStatus.Processing)]
+    [InlineData("paid", PaymentStatus.Approved)]
+    [InlineData("approved", PaymentStatus.Approved)]
+    [InlineData("expired", PaymentStatus.Expired)]
+    [InlineData("cancelled", PaymentStatus.Cancelled)]
+    [InlineData("canceled", PaymentStatus.Cancelled)]
+    [InlineData("refunded", PaymentStatus.Refunded)]
+    [InlineData("redeemed", PaymentStatus.Approved)]
+    [InlineData("under_dispute", PaymentStatus.Pending)]
+    [InlineData("failed", PaymentStatus.Failed)]
+    public void AbacatePay_MapsAllCanonicalStatuses(string providerStatus, PaymentStatus expected)
+    {
+        var mapped = PaymentStatusMapper.FromProviderStatus("AbacatePay", providerStatus);
+        mapped.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("abacatepay")]
+    [InlineData("AbacatePay")]
+    [InlineData("ABACATE_PAY")]
+    [InlineData("Abacate_Pay")]
+    public void AbacatePay_ProviderCode_IsAcceptedCaseInsensitive(string providerCode)
+    {
+        var mapped = PaymentStatusMapper.FromProviderStatus(providerCode, "paid");
+        mapped.Should().Be(PaymentStatus.Approved);
+    }
+
+    [Fact]
+    public void AbacatePay_UnknownStatus_ShouldDefaultToPendingSafely()
+    {
+        var mapped = PaymentStatusMapper.FromProviderStatus("AbacatePay", "unknown_status_xyz");
+        mapped.Should().Be(PaymentStatus.Pending);
+    }
+
+    [Fact]
+    public void AbacatePay_EmptyStatus_ShouldDefaultToPending()
+    {
+        var mapped = PaymentStatusMapper.FromProviderStatus("AbacatePay", "");
+        mapped.Should().Be(PaymentStatus.Pending);
+    }
 }

@@ -45,6 +45,8 @@ public static class PaymentStatusMapper
         "expired" => PaymentStatus.Expired,
         "cancelled" or "canceled" => PaymentStatus.Cancelled,
         "refunded" => PaymentStatus.Refunded,
+        "redeemed" => PaymentStatus.Approved,
+        "under_dispute" => PaymentStatus.Pending,
         "failed" => PaymentStatus.Failed,
         _ => PaymentStatus.Pending
     };

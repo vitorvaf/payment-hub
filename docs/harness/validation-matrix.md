@@ -41,9 +41,17 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | Phase | Slice | Tipo | Comando ou Acao | Resultado esperado | Resultado real | Status | Data |
 |-------|-------|------|-----------------|--------------------|---------------|--------|------|
 | 2 | Fake | Unit | `dotnet test --filter FakePaymentProvider` | Todos passando | Passando | `PASS` | 2026-06-17 |
-| 2 | Fake | Unit | `dotnet test --filter PaymentStatusMapperTests` | Todos passando | Passando | `PASS` | 2026-06-17 |
-| 2 | AbacatePay | Unit | `dotnet test --filter AbacatePayAdapterTests` | Todos passando | `PENDING` | `PENDING` | — |
-| 2 | AbacatePay | Integration | Webhook AbacatePay sandbox | 202 Accepted e status canonico | `PENDING` | `PENDING` | — |
+| 2 | Fake | Unit | `dotnet test --filter PaymentStatusMapperTests` | Todos passando | 13 testes (9 Fake/Stripe/MercadoPago + 4 AbacatePay novos) | `PASS` | 2026-06-27 |
+| 2 | AbacatePay | Unit | `dotnet test --filter AbacatePayClientTests` | Todos passando | 40 passando (Bearer header, envelope, status code 400/401/403/404/429/5xx, timeout, network, simulation gating) | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Unit | `dotnet test --filter AbacatePayProviderAdapterTests` | Todos passando | 17 passando (unprotect, mapeamento de status, payload PIX, ProviderPaymentId, ausencia de leak) | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings em 9 projetos | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Full Suite | `dotnet test PaymentHub.slnx` | >= 348 testes (291 baseline + 57 AbacatePay), zero regressao | 348 passando | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Provider Regression | `dotnet test --filter "FullyQualifiedName~Provider"` | >= 72 testes, Fake/Stripe/MercadoPago intactos | 72 passando | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Integration Regression | `dotnet test PaymentHub.IntegrationTests` | 10 testes Slice 1-IT preservados | 10 passando | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Architecture | `scripts/agent-architecture-check.sh` | Camadas Clean preservadas; Provider e Application sem dependências proibidas | Passou | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Docs | `scripts/agent-docs-check.sh` | harness e OpenCode integros | Passou | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Diff | `git diff --check` | Sem warnings | Sem warnings | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Sandbox end-to-end | Webhook AbacatePay sandbox real (chave de fato) | Status canonico via HMAC | NAO executado neste slice: webhooks externos completos foram para Slice 2-B. Cobertura de mapper e status cobre o dominio sem chamada externa real. | `SKIPPED` | 2026-06-27 (Slice 2-B pendente) |
 
 ---
 

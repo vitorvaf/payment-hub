@@ -201,15 +201,30 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
             var newStatus = PaymentStatusMapper.FromProviderStatus(webhook.ProviderCode.ToString(), parsed.ProviderStatus ?? parsed.EventType);
             var previousStatus = payment.Status;
             var statusChanged = payment.ApplyProviderStatus(newStatus, providerPaymentId);
-            // Slice 3-IT fix: explicitly add the new PaymentAttempt via the
-            // repository. EF Core's collection navigation change detector
-            // does NOT pick up items added via the entity's collection
-            // property (Payment.Attempts is an IReadOnlyCollection backed
-            // by a private List) — they end up tracked as Modified instead
-            // of Added, which causes the subsequent UPDATE to match 0 rows
-            // because there is no existing row with the new Id. Calling
-            // _payments.AddAttemptAsync ensures EF tracks the entity as
-            // Added and issues the correct INSERT.
+            // ⚠️ ANTI-REGRESSION (Slice 3-IT Rule 2, BLOCKER for Phase 7-IT).
+            // `payment.RegisterAttempt(...)` adds the new attempt to the
+            // private `_attempts` list (collection navigation). EF Core 10
+            // does NOT reliably detect that addition as `Added` via the
+            // collection navigation change detector — the new entity ends
+            // up tracked as `Modified`, the subsequent SaveChangesAsync
+            // issues an UPDATE with the new Guid in the WHERE clause, the
+            // UPDATE matches 0 rows, and EF throws `DbUpdateConcurrencyException`.
+            // We must call `_payments.AddAttemptAsync(attempt, ct)` so the
+            // repository explicitly calls `_db.PaymentAttempts.AddAsync(...)`,
+            // which marks the entity as `Added` and produces the correct
+            // INSERT.
+            //
+            // **DO NOT** remove the `await _payments.AddAttemptAsync(...)`
+            // line. The E2E test
+            // `ProviderWebhook_ValidSignature_UpdatesPaymentAndEnqueuesOutbox`
+            // will fail at WebhookHandlers.cs line ~248 (the next
+            // SaveChangesAsync after MarkProcessed). Apply the same pattern
+            // to any future handler that adds to a private collection
+            // navigation (refunds, chargebacks, expirations, etc.).
+            //
+            // See `docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md`
+            // (Anti-Regression Notes, Rule 2) and `feature_list.md` entry
+            // `PH-PROVIDER-WEBHOOK-ATTEMPT-TRACKING`.
             var attempt = payment.RegisterAttempt(
                 ToAttemptStatus(newStatus),
                 providerPaymentId,

@@ -148,13 +148,20 @@ public class WebhookEventConfiguration : IEntityTypeConfiguration<WebhookEvent>
         builder.Property(w => w.ProviderCode).HasColumnName("provider_code").HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.Property(w => w.ProviderEventId).HasColumnName("provider_event_id").HasMaxLength(200);
         builder.Property(w => w.EventType).HasColumnName("event_type").HasMaxLength(80).IsRequired();
-        // Slice 3-IT fix: raw_payload MUST be byte-preserving so HMAC
-        // signature verification works end-to-end. Postgres `jsonb` parses
-        // and normalises the JSON on insert, which mutates whitespace
-        // (single space after every colon/comma) and breaks HMAC over the
-        // raw body. The application treats the payload as opaque (it is
-        // passed straight to the provider adapter for verification +
-        // normalization), so `text` is the correct storage type.
+        // ⚠️ ANTI-REGRESSION (Slice 3-IT Rule 1, BLOCKER for Phase 7-IT).
+        // raw_payload MUST remain `text` for byte-exact preservation of the
+        // raw HTTP body. Postgres `jsonb` parses and normalises the JSON on
+        // insert, mutating whitespace (single space after every colon and
+        // comma) and breaking HMAC verification over the raw body. The
+        // application treats the payload as opaque (passed straight to the
+        // provider adapter for verification + normalization), so `text` is
+        // the correct storage type. Migration `20260629205545_ChangeRawPayloadToText`
+        // downgrades the original `jsonb` column. **DO NOT** change this back
+        // to `jsonb` — the E2E test `ProviderWebhook_ValidSignature_UpdatesPaymentAndEnqueuesOutbox`
+        // will fail with `AbacatePay webhook signature invalid (SignatureMismatch)`.
+        // See `docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md`
+        // (Anti-Regression Notes, Rule 1) and `feature_list.md` entry
+        // `PH-PROVIDER-WEBHOOK-RAWPAYLOAD-TEXT`.
         builder.Property(w => w.RawPayloadJson).HasColumnName("raw_payload").HasColumnType("text").IsRequired();
         builder.Property(w => w.Signature).HasColumnName("signature").HasMaxLength(500);
         builder.Property(w => w.ProcessingStatus).HasColumnName("processing_status").HasConversion<string>().HasMaxLength(32).IsRequired();

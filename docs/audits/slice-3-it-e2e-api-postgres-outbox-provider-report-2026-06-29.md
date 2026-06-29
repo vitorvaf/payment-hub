@@ -6,6 +6,34 @@ Specs relacionadas: `docs/specs/009-api-contracts.md`, `docs/specs/007-inbox-out
 ADRs consultadas: `ADR-0009-end-to-end-integration-tests.md` (pendente), referencias Slice 1-IT (`ADR-0010-real-outbox-dispatcher-location.md`).
 Gap enderecado: **P2-2** do `docs/roadmap/002-phase-status-board.md` (projeto de testes de integracao sem testes e2e descobertos).
 
+## ⚠️ Anti-Regression Notes (LEIA ANTES DE PROXIMO SLICE)
+
+Dois achados do Slice 3-IT sao **anti-regression rules** — qualquer dev/slice que as violar reintroduz um bug de producao:
+
+### Rule 1 — `webhook_events.raw_payload` DEVE permanecer `text` (NAO `jsonb`)
+
+- **NUNCA** altere `WebhookEventConfiguration.RawPayloadJson` para `HasColumnType("jsonb")` ou qualquer outro tipo que reformate espaco/quebra de linha. Postgres `jsonb` nao preserva bytes exatos — quebra HMAC sobre o body bruto, abrindo a porta para forjar webhooks com payload adulterado.
+- **Por que nao foi pego por unit tests**: unit tests nao fazem roundtrip pelo Postgres; eles constroem `WebhookEvent` em memoria. Apenas testes E2E contra Postgres real exponham o problema.
+- **Onde mora**: `src/PaymentHub.Infrastructure.Postgres/Configurations/EntityConfigurations.cs:151` (`HasColumnType("text")`) + `src/PaymentHub.Infrastructure.Postgres/Migrations/20260629205545_ChangeRawPayloadToText.cs` (downgrade).
+- **Anti-pattern**: `migrationBuilder.AlterColumn<string>(..., type: "jsonb", nullable: false, ...)` em `webhook_events.raw_payload`. Recusar PR; rollback imediato se passar.
+- **Cobertura**: o teste `ProviderWebhook_ValidSignature_UpdatesPaymentAndEnqueuesOutbox` (em `tests/PaymentHub.IntegrationTests/EndToEnd/AbacatePayCheckoutE2ETests.cs`) quebra com `AbacatePay webhook signature invalid (SignatureMismatch)` se a coluna voltar para `jsonb`.
+
+### Rule 2 — `ProcessWebhookEventHandler.ProcessAsync` DEVE chamar `_payments.AddAttemptAsync(attempt, ct)` explicitamente
+
+- **NUNCA** substitua `_payments.AddAttemptAsync(attempt, cancellationToken)` por um simples `_payments` nao chame e deixa `payment.RegisterAttempt(...)` sozinho. O EF Core 10 nao detecta confiavelmente o novo item via collection navigation privada (`Payment._attempts`); o item sera tracked como `Modified` em vez de `Added`, levantando `DbUpdateConcurrencyException` no UPDATE subsequente (0 rows, Guid novo nao tem row).
+- **Por que nao foi pego pelos unit tests do Slice 2-B**: o `Mock<IPaymentRepository>(MockBehavior.Strict)` quebraria com `AddAttemptAsync` nao configurado — mas o Slice 2-B NAO chamava `AddAttemptAsync` ainda. Slice 3-IT introduziu a chamada + ajustou o setup em `BuildCommonMocks`. Antes disso, o codigo ja era buggy.
+- **Onde mora**: `src/PaymentHub.Application/Webhooks/WebhookHandlers.cs:204-218` (`await _payments.AddAttemptAsync(attempt, cancellationToken);`). Comentario inline existente explica o issue.
+- **Anti-pattern**: `_payments.UpdateAsync(payment)` seguido de `payment.RegisterAttempt(...)` (Update nao insere attempt); ou `_db.PaymentAttempts.Add(attempt)` direto sem `SaveChangesAsync` (nao persiste); ou usar `new Mock<IPaymentRepository>(MockBehavior.Loose)` removendo o setup que tornaria o item explicito Added.
+- **Regra paralela para PaymentRepository.AddAsync**: ja passa `AddRangeAsync(payment.Attempts)` ao criar checkout. Nao replicar a fragilidade em outros repositories; sempre preferir `Repository.AddXxx(entity, ct)` explicito.
+- **Cobertura**: o teste `ProviderWebhook_ValidSignature_UpdatesPaymentAndEnqueuesOutbox` quebra com `DbUpdateConcurrencyException` na linha 236 de `WebhookHandlers.cs` se a chamada explicita for removida.
+
+### Onde esses rules aparecem em outros docs
+
+- `docs/harness/learnings.md` entrada `2026-06-29 - Slice 3-IT descobre 2 producao bugs via E2E ...` (secoes "Impacto para proximos agentes" itens (a) e (b)).
+- `docs/harness/validation-matrix.md` — Phase 7 Slice 3-IT tem 2 linhas "MUST-NOT-REGRESS" (ver tabela mais abaixo).
+- `feature_list.md` — `PH-PROVIDER-WEBHOOK-RAWPAYLOAD-TEXT` e `PH-PROVIDER-WEBHOOK-ATTEMPT-TRACKING` marcados como `Concluido` com nota `BLOCKER for Phase 7-IT`.
+- Comentarios inline no codigo (`EntityConfigurations.cs:148-153` e `WebhookHandlers.cs:209-217`) — sao a primeira linha de defesa para um dev que abre o arquivo.
+
 ## Resumo
 
 Ate o Slice 3-IT (2026-06-29), `tests/PaymentHub.IntegrationTests/` cobria apenas migrations + repositorios principais (10 testes Slice 1-IT) sem passar pelo pipeline HTTP real. P2-2 do phase board marcava "e2e API+Worker ainda nao coberto" desde 2026-06-17. Este slice entregou:
@@ -59,6 +87,10 @@ Total: **5 arquivos produtivos alterados**.
 
 ## Producao bugs encontrados (P1 — unit tests nao cobriam)
 
+> **IMPORANTE**: as duas decisoes abaixo estao consolidadas na secao `Anti-Regression Notes` no topo deste relatorio. Nao as viole em slices futuros.
+
+### Bug A — `webhook_events.raw_payload` era `jsonb`, nao `text`
+
 ### Bug A — `webhook_events.raw_payload` era `jsonb`, nao `text`
 
 **Sintoma**: HMAC signature verifica `ProviderWebhooksController.Receive` em `ProcessWebhookEventHandler.ProcessAsync`, mas o teste E2E (`ProviderWebhook_ValidSignature_UpdatesPaymentAndEnqueuesOutbox`) reporta `webhook.LastError = "AbacatePay webhook signature invalid (SignatureMismatch)"`. Diagnostic mostrava `stored[0..40]={"id": "evt-...` vs `sent[0..40]={"id":"evt-...` — espacos extras apos cada `:`.
@@ -70,6 +102,8 @@ Total: **5 arquivos produtivos alterados**.
 **Por que unit tests nao pegaram**: Nenhum unit test usa a fixture Postgres — eles constroem `WebhookEvent` com `RawPayloadJson = "..."` ja em memoria. O `EntityConfigurations` tem o tipo, mas a interacao com `jsonb` so manifesta em roundtrip real com o Postgres.
 
 ### Bug B — `ProcessWebhookEventHandler.ProcessAsync` nao marcava `PaymentAttempt` como Added
+
+> Ver `Anti-Regression Notes Rule 2` no topo. Resumo abaixo e referencia operacional.
 
 **Sintoma**: Linha 236 (`await _uow.SaveChangesAsync(cancellationToken)` apos `webhook.MarkProcessed()`) levantava `DbUpdateConcurrencyException` — UPDATE afetou 0 linhas.
 

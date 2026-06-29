@@ -81,6 +81,8 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | 7 | 3-IT | Docs | `scripts/agent-docs-check.sh` | harness e OpenCode integros | Passou | `PASS` | 2026-06-29 (Slice 3-IT) |
 | 7 | 3-IT | Diff | `git diff --check` | Sem warnings | Sem warnings | `PASS` | 2026-06-29 (Slice 3-IT) |
 | 7 | 3-IT | Docs | `docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md` | Relatorio final + Q1-Q7 respondidas + 2 producoes bugs encontrados (jsonb + EF tracking) | Criado | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | **MUST-NOT-REGRESS** | `EntityConfigurations.cs` linha 151 + `Migrations/20260629205545_ChangeRawPayloadToText.cs` | `webhook_events.raw_payload` deve ser `text`, NAO `jsonb` | `text` (auditado) | `PASS` | 2026-06-29 (Slice 3-IT) — Anti-Regression Rule 1 |
+| 7 | 3-IT | **MUST-NOT-REGRESS** | `WebhookHandlers.cs:204-218` | `ProcessAsync` deve chamar `_payments.AddAttemptAsync(attempt, ct)` explicitamente | Sim (auditado) | `PASS` | 2026-06-29 (Slice 3-IT) — Anti-Regression Rule 2 |
 
 ---
 

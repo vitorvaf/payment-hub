@@ -12,6 +12,12 @@ public interface ICredentialProtector
     string Unprotect(string protectedText);
 }
 
+public interface IWebhookSecretProtector
+{
+    string Protect(string plainTextSecret);
+    string Unprotect(string protectedSecret);
+}
+
 public interface IWebhookSigner
 {
     string Sign(string payload, string secret);

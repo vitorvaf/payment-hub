@@ -85,3 +85,53 @@ Na pratica, o banco tende a observar o pagamento ja em `Pending` quando a criaca
 Esse comportamento e aceitavel para o MVP, mas a spec consolida a semantica:
 `Created` e o estado interno antes do provider;
 `Pending` e o estado da resposta bem-sucedida.
+
+## Provider AbacatePay (Slice 2-A — 2026-06-27)
+
+Adapter funcional para **Checkout Transparente PIX** em sandbox/devMode.
+Endpoints Reais usados pelo `AbacatePayClient`:
+
+- `POST /transparents/create` — cria o PIX e retorna `brCode`, `brCodeBase64`,
+  `expiresAt` e `providerPaymentId`. O adapter sintetiza
+  `abacatepay://pix/<providerPaymentId>` como `CheckoutUrl` para manter
+  simetria com a API publica (consumidores que precisarem renderizar o QR
+  Code de forma imediata devem consumir `RawResponseJson` ate que a
+  response publica exponha `brCode`/`brCodeBase64` em micro-slice proprio).
+- `GET /transparents/check?id=<providerPaymentId>` — consulta de status.
+  Exposto apenas em `IAbacatePayClient` (sincronizacao interna).
+- `POST /transparents/simulate-payment?id=<providerPaymentId>` — opt-in via
+  `Providers:AbacatePay:AllowDevModeSimulation`; **default `false` em
+  producao**. Cobertura de teste sobe no `AbacatePayClientTests`.
+
+Mapeamento canonico extendido (status adicionais alem dos basicos ja
+documentados em `008-provider-adapters.md`):
+
+| Status bruto AbacatePay | Status canonico |
+|-------------------------|-----------------|
+| `PENDING` | `Pending` |
+| `PAID` / `APPROVED` | `Approved` |
+| `EXPIRED` | `Expired` |
+| `CANCELLED` / `CANCELED` | `Cancelled` |
+| `REFUNDED` | `Refunded` |
+| `REDEEMED` | `Approved` (decisao documentada em teste — equivalente funcional de um PIX ja resgatado) |
+| `UNDER_DISPUTE` | `Pending` (decisao explicita: ate existir anti-fraude/MVP de chargeback, mantemos em estado intermedio ate conciliacao) |
+| `FAILED` | `Failed` |
+| (status desconhecido) | `Pending` (default seguro) |
+
+Caminho canonico de criacao via adapter:
+
+1. `CreateCheckoutHandler` resolve `ProviderAccount`, propaga
+   `ProviderAccountId`, `Environment`, `EncryptedCredentials` via
+   `CreateCheckoutProviderRequest` (campos opcionais, backward-compatible).
+2. `AbacatePayProviderAdapter.CreateCheckoutAsync` chama
+   `ICredentialProtector.Unprotect` para extrair a API key da conta
+   registrada. Se a conta nao tiver credencial valida o adapter retorna
+   `Success=false` com mensagem segura (sem vazar chave).
+3. Client HTTP envia `POST /transparents/create` com Bearer; resposta
+   `200 + success=true` e mapeada para `PaymentStatus.Pending` via
+   `PaymentStatusMapper`. O `Payment` e persistido em `Pending` com
+   `PaymentAttemptStatus.Succeeded`, mesmo padrao de outros providers.
+4. Falha categorizada (400/401/403/404/429/5xx, network, timeout,
+   `success=false`) NAO e logada com API key/body/brCodeBase64; apenas
+   `AbacatePayErrorCategory` + `StatusCode?` + `IsTransient` chegam a
+   logs e ao `PaymentAttempt.LastError`.

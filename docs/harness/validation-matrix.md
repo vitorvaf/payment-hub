@@ -41,9 +41,17 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | Phase | Slice | Tipo | Comando ou Acao | Resultado esperado | Resultado real | Status | Data |
 |-------|-------|------|-----------------|--------------------|---------------|--------|------|
 | 2 | Fake | Unit | `dotnet test --filter FakePaymentProvider` | Todos passando | Passando | `PASS` | 2026-06-17 |
-| 2 | Fake | Unit | `dotnet test --filter PaymentStatusMapperTests` | Todos passando | Passando | `PASS` | 2026-06-17 |
-| 2 | AbacatePay | Unit | `dotnet test --filter AbacatePayAdapterTests` | Todos passando | `PENDING` | `PENDING` | — |
-| 2 | AbacatePay | Integration | Webhook AbacatePay sandbox | 202 Accepted e status canonico | `PENDING` | `PENDING` | — |
+| 2 | Fake | Unit | `dotnet test --filter PaymentStatusMapperTests` | Todos passando | 13 testes (9 Fake/Stripe/MercadoPago + 4 AbacatePay novos) | `PASS` | 2026-06-27 |
+| 2 | AbacatePay | Unit | `dotnet test --filter AbacatePayClientTests` | Todos passando | 40 passando (Bearer header, envelope, status code 400/401/403/404/429/5xx, timeout, network, simulation gating) | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Unit | `dotnet test --filter AbacatePayProviderAdapterTests` | Todos passando | 17 passando (unprotect, mapeamento de status, payload PIX, ProviderPaymentId, ausencia de leak) | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings em 9 projetos | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Full Suite | `dotnet test PaymentHub.slnx` | >= 348 testes (291 baseline + 57 AbacatePay), zero regressao | 348 passando | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Provider Regression | `dotnet test --filter "FullyQualifiedName~Provider"` | >= 72 testes, Fake/Stripe/MercadoPago intactos | 72 passando | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Integration Regression | `dotnet test PaymentHub.IntegrationTests` | 10 testes Slice 1-IT preservados | 10 passando | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Architecture | `scripts/agent-architecture-check.sh` | Camadas Clean preservadas; Provider e Application sem dependências proibidas | Passou | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Docs | `scripts/agent-docs-check.sh` | harness e OpenCode integros | Passou | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Diff | `git diff --check` | Sem warnings | Sem warnings | `PASS` | 2026-06-27 (Slice 2-A) |
+| 2 | AbacatePay | Sandbox end-to-end | Webhook AbacatePay sandbox real (chave de fato) | Status canonico via HMAC | NAO executado neste slice: webhooks externos completos foram para Slice 2-B. Cobertura de mapper e status cobre o dominio sem chamada externa real. | `SKIPPED` | 2026-06-27 (Slice 2-B pendente) |
 
 ---
 
@@ -52,8 +60,8 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | Phase | Slice | Tipo | Comando ou Acao | Resultado esperado | Resultado real | Status | Data |
 |-------|-------|------|-----------------|--------------------|---------------|--------|------|
 | 3 | Webhook | Unit | `dotnet test --filter ProcessWebhookEventHandlerTests` | Todos passando | 9 passando | `PASS` | 2026-06-17 |
-| 3 | Outbox | Unit | Dispatcher HTTP real registrado | Worker entrega HTTP sem noop | `PENDING` | `PENDING` | — |
-| 3 | Workers | Integration | Workers com banco real | Inbox e Outbox processados | `PENDING` | `PENDING` | — |
+| 3 | Outbox | Unit | Dispatcher HTTP real registrado | Worker entrega HTTP sem noop | `HttpApplicationWebhookDispatcher` realocado para `Infrastructure.Postgres/Webhooks/`; DI centralizado em `AddPaymentHubPostgres`; `IHttpClientFactory` nomeado | `PASS` | 2026-06-26 (Slice 7-A.1/.2/.3) |
+| 3 | Workers | Integration | Workers com banco real | Inbox e Outbox processados | `PENDING` | `PENDING` | — (Slice 1-IT) |
 
 ---
 
@@ -78,7 +86,26 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | 6 | 6-B | Unit | Repositorio recebe `ProviderAccount` no escopo correto | Teste passa | Passou | `PASS` | 2026-06-18 |
 | 6 | 6-B | Unit | Caminho feliz continua funcionando | Teste passa | Passou | `PASS` | 2026-06-18 |
 | 6 | 6-B | Unit | `ApiKeyAuthenticationMiddleware` continua passando 11 testes (sem regressao) | Teste passa | 11 testes passando | `PASS` | 2026-06-18 |
-| 6 | 6-C | Unit | WebhookSecret criptografado no banco | Nao visievel em texto claro | `PENDING` | `PENDING` | — |
+| 6 | 6-C | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `dotnet test PaymentHub.slnx` | Todos os testes passando | 133 testes passando | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `dotnet test --filter "FullyQualifiedName~WebhookSecret"` | Cobre protector, handler, seeder e dispatcher | 25 testes passando | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `dotnet test --filter "FullyQualifiedName~Bootstrap"` | Sem regressao | 15 testes passando | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `dotnet test --filter "FullyQualifiedName~ApiKeyAuthenticationMiddlewareTests"` | Sem regressao | 11 testes passando | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `dotnet test --filter "FullyQualifiedName~ProviderAccount"` | Sem regressao | 15 testes passando | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `IWebhookSecretProtector` roundtrip de plaintext | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `IWebhookSecretProtector.Protect` nao retorna plaintext | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `IWebhookSecretProtector.Protect` produz ciphertexts diferentes por chamada | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `IWebhookSecretProtector.Unprotect` falha em payload com purpose incorreto | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `IWebhookSecretProtector` lanca `InvalidOperationException` se chave vazia | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `RegisterApplicationClientHandler` protege `webhookSecret` antes de persistir | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `RegisterApplicationClientHandler` nao expoe secret em DTO | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `RegisterApplicationClientHandler` retorna `hasWebhookSecret=true` quando secret presente | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `RegisterApplicationClientHandler` continua retornando API Key | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `DevelopmentDataSeeder` protege segredo de dev antes de persistir | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `DevelopmentDataSeeder` nao loga raw webhook secret | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `HttpApplicationWebhookDispatcher` desprotege segredo antes de assinar | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `HttpApplicationWebhookDispatcher` nao envia request se `Unprotect` falhar | Teste passa | Passou | `PASS` | 2026-06-25 |
+| 6 | 6-C | Unit | `HttpApplicationWebhookDispatcher` nao inclui signature quando nao ha secret | Teste passa | Passou | `PASS` | 2026-06-25 |
 | 6 | 6-D | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings | `PASS` | 2026-06-18 |
 | 6 | 6-D | Unit | `dotnet test --filter "FullyQualifiedName~Bootstrap"` | Todos passando | 15 testes passando | `PASS` | 2026-06-18 |
 | 6 | 6-D | Unit | `dotnet test PaymentHub.slnx` | >= 106 testes passando | 106 testes passando | `PASS` | 2026-06-18 |
@@ -103,10 +130,36 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 
 | Phase | Slice | Tipo | Comando ou Acao | Resultado esperado | Resultado real | Status | Data |
 |-------|-------|------|-----------------|--------------------|---------------|--------|------|
-| 7 | 7-A | Unit | Dispatcher HTTP real envia POST para webhook URL | 2xx marca OutboxEvent como Sent | `PENDING` | `PENDING` | — |
-| 7 | 7-A | Unit | Dispatcher HTTP nao-2xx gera retry | RetryPolicy aplicada | `PENDING` | `PENDING` | — |
-| 7 | Workers | Integration | `OutboxDispatcherWorker` com banco real | OutboxEvent marcado como Sent apos HTTP 200 | `PENDING` | `PENDING` | — |
-| 7 | Workers | Integration | `WebhookProcessorWorker` com banco real | WebhookEvent processado e OutboxEvent criado | `PENDING` | `PENDING` | — |
+| 7 | 7-A | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | `dotnet test PaymentHub.slnx` | >= 200 testes sem regressao | 281 testes passando | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | Dispatcher HTTP real envia POST para webhook URL | 2xx marca OutboxEvent como Sent | `HttpApplicationWebhookDispatcher.DispatchAsync` chama `_apps.GetByTenantAndIdAsync(...)`; 2xx -> `MarkSent`; coberto por `HttpApplicationWebhookDispatcherTests` | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | Dispatcher HTTP nao-2xx gera retry | RetryPolicy aplicada | `LastError = WebhookDispatcherCategory.HttpFailure + statusCode`; `MarkRetryWithStatus`; coberto por testes | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | Dispatcher aborta HTTP quando `Unprotect` falha | `LastError = UnprotectFailure`; nenhum request enviado | Coberto por `OutboxDispatcherWorkerWithRealDispatcherTests` | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | Dispatcher marca Failed sem retry quando `WebhookUrl` ausente | `MissingWebhookUrl`; sem retry | Coberto por testes | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | `OutboxEvent.LastError` nao persiste `ex.Message`/body HTTP | Apenas `(category, statusCode)` em `LastError` | Coberto por testes; `MarkRetryWithStatus` e `MarkFailedWithStatus` sao os unicos metodos publicos | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | `OutboxDispatcherWorker` usa `IOutboxRepository` + `IOutboxEventStore` + `IClock` | Nao acessa `DbContext` direto; `DateTime.UtcNow` removido | Coberto por `OutboxDispatcherWorkerWithRealDispatcherTests` | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | `RegisterApplicationClientValidator` rejeita `WebhookUrl` nao-HTTPS / loopback / RFC1918 / link-local / IMDS | Cobertura completa de vetores SSRF | `WebhookUrlValidatorTests` (66+ casos) + `RegisterApplicationClientValidatorTests` (17 testes) | `PASS` | 2026-06-26 |
+| 7 | 7-A | Unit | Worker falha no startup se `PaymentHub:WebhookSecretEncryptionKey` ausente | `InvalidOperationException` no startup | Fail-fast em `Worker/Program.cs:53-56` em scope anonimo | `PASS` | 2026-06-26 |
+| 7 | 7-A | Architecture | `scripts/agent-architecture-check.sh` | Worker nao depende de Api | Passed | `PASS` | 2026-06-26 |
+| 7 | 7-A | Docs | `docs/adr/ADR-0007-webhook-secret-protection.md` + `docs/adr/ADR-0010-real-outbox-dispatcher-location.md` | ADRs `ACCEPTED` + indice atualizado | Criados e indexados | `PASS` | 2026-06-26 |
+| 7 | 7-A | Docs | `docs/roadmap/000-payment-hub-roadmap.md` | P1-4 marcado como resolvido | Resolvido | `PASS` | 2026-06-26 |
+| 7 | 7-A | Docs | `docs/roadmap/002-phase-status-board.md` | Phase 7 com 0 gaps P1 proprios | 0 gaps P1 proprios | `PASS` | 2026-06-26 |
+| 7 | 7-A | Docs | `feature_list.md` PH-WORKER-001 | Concluido | Concluido | `PASS` | 2026-06-26 |
+| 7 | Workers | Integration | `OutboxDispatcherWorker` com banco real | OutboxEvent marcado como Sent apos HTTP 200 | `PENDING` | `PENDING` | — (Slice 7-IT) |
+| 7 | Workers | Integration | `WebhookProcessorWorker` com banco real | WebhookEvent processado e OutboxEvent criado | `PENDING` | `PENDING` | — (Slice 7-IT) |
+| 7 | 1-IT | Integration | `dotnet test tests/PaymentHub.IntegrationTests` | Migrations + repositorios principais + Outbox via Testcontainers | 10 testes passando (Postgres 16-alpine, container compartilhado por run + `TRUNCATE CASCADE` entre testes) | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 1 | 1-IT | Integration | `Migrations_ShouldApplySuccessfully_OnEmptyPostgresDatabase` | `MigrateAsync` em banco vazio + `INFORMATION_SCHEMA` | Tabelas `tenants`, `application_clients`, `provider_accounts`, `api_keys`, `payments`, `payment_attempts`, `webhook_events`, `outbox_events`, `audit_logs`, `idempotency_keys` presentes | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 1 | 1-IT | Integration | `DbContext_ShouldPersistTenantAndApplicationClient_AndReloadCorrectly` | Roundtrip de `Tenant`/`ApplicationClient` com `Guid`/status preservados | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 1 | 1-IT | Integration | `Tenant_AndApplication_UniqueIndex_ShouldPreventDuplicateSlug` | Indice unico `tenants.slug` recusa duplicata (`DbUpdateException`) | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 6 | 1-IT | Integration | `ApplicationClient_ShouldPersistProtectedWebhookSecret_AndAllowInternalUnprotect` | Plaintext nao persistido + `Unprotect` recupera original + `HasWebhookSecret` | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 6 | 1-IT | Integration | `ApplicationClient_WithoutWebhookSecret_ShouldReportHasWebhookSecretFalse` | `HasWebhookSecret` consistente apos reload | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 1 | 1-IT | Integration | `ProviderAccountRepository_ShouldPersistAndLoadByTenantAndApplication` | `GetDefaultAsync` + `GetByCodeAsync` retornam conta persistida | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 1 | 1-IT | Integration | `ProviderAccountRepository_ShouldRespectsTenantScope` | Conta de outro tenant nao vaza | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 7 | 1-IT | Integration | `OutboxEvent_ShouldPersistPendingProcessingAndSentStates` | Transicoes `Pending` -> `Processing` -> `Sent` via `IOutboxEventStore` | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 7 | 1-IT | Integration | `OutboxEvent_SafeRetry_ShouldPersistCategoryWithoutExceptionMessage` | `MarkRetryWithCategory` grava apenas categoria em `LastError` | Passou | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 7 | 1-IT | Integration | `OutboxRepository_ShouldReturnOnlyDispatchablePendingEvents` | Query retorna apenas `Pending` com `NextRetryAt <= now` | Passou (5 estados cobertos; `Processing` orfao documentado como gap) | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 7 | 1-IT | Docs | `docs/audits/slice-1-it-postgres-integration-tests-report-2026-06-26.md` | Relatorio final + Q1-Q5 respondidas + gaps remanescentes | Criado | `PASS` | 2026-06-26 (Slice 1-IT) |
+| 7 | 1-IT | Architecture | `scripts/agent-architecture-check.sh` | IntegrationTests respeita camadas (Domain/Application/Infrastructure.Postgres) | Passed | `PASS` | 2026-06-26 (Slice 1-IT) |
 
 ---
 

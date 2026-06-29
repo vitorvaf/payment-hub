@@ -2,10 +2,8 @@ using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using PaymentHub.Api.Auth;
-using PaymentHub.Api.Webhooks;
 using PaymentHub.Application.Abstractions.Bootstrap;
 using PaymentHub.Application.Abstractions.Context;
-using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Providers;
 using PaymentHub.Application.Bootstrap;
 using PaymentHub.Application.Checkouts;
@@ -60,7 +58,6 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddHttpClient("application-webhook");
 
 builder.Services.AddPaymentHubPostgres(builder.Configuration);
 builder.Services.AddPaymentHubProviders(builder.Configuration);
@@ -70,7 +67,6 @@ builder.Services.AddSingleton<IRuntimeEnvironment, HostRuntimeEnvironment>();
 builder.Services.AddSingleton<IBootstrapPolicy, HostBootstrapPolicy>();
 builder.Services.Configure<BootstrapOptions>(builder.Configuration.GetSection(BootstrapOptions.SectionName));
 builder.Services.AddScoped<IDevelopmentDataSeeder, DevelopmentDataSeeder>();
-builder.Services.AddScoped<IApplicationWebhookDispatcher, HttpApplicationWebhookDispatcher>();
 
 builder.Services.AddScoped<IRegisterTenantHandler, RegisterTenantHandler>();
 builder.Services.AddScoped<IRegisterApplicationClientHandler, RegisterApplicationClientHandler>();

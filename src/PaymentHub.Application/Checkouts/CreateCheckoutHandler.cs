@@ -103,10 +103,10 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         var money = Money.Of(amount, string.IsNullOrWhiteSpace(request.Currency) ? "BRL" : request.Currency);
         var metadataJson = request.Metadata is null ? null : JsonSerializer.Serialize(request.Metadata);
 
-        var providerCode = await ResolveProviderAsync(
+        var resolved = await ResolveProviderAsync(
             tenantId, applicationId, application.DefaultProvider, requestedProviderCode, cancellationToken);
 
-        var adapter = _router.Resolve(providerCode.ToString());
+        var adapter = _router.Resolve(resolved.ProviderCode.ToString());
 
         var payment = new Payment(
             Guid.NewGuid(),
@@ -114,7 +114,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
             applicationId,
             request.ExternalReference,
             money,
-            providerCode,
+            resolved.ProviderCode,
             request.Customer?.Email,
             request.Customer?.Name,
             request.SuccessUrl,
@@ -135,7 +135,12 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
             payment.SuccessUrl,
             payment.CancelUrl,
             payment.MetadataJson,
-            request.Items.Select(i => new ProviderCheckoutItem(i.Id, i.Name, i.Quantity, i.UnitAmount)).ToList());
+            request.Items.Select(i => new ProviderCheckoutItem(i.Id, i.Name, i.Quantity, i.UnitAmount)).ToList())
+        {
+            ProviderAccountId = resolved.ProviderAccountId,
+            ProviderEnvironment = resolved.Environment.ToString(),
+            ProtectedCredentials = resolved.EncryptedCredentials
+        };
 
         var providerResult = await adapter.CreateCheckoutAsync(providerRequest, cancellationToken);
 
@@ -182,7 +187,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
                 externalReference = payment.ExternalReference,
                 amount = money.Amount,
                 currency = money.Currency,
-                provider = providerCode.ToString(),
+                provider = resolved.ProviderCode.ToString(),
                 status = payment.Status.ToString(),
                 checkoutUrl = payment.CheckoutUrl,
                 providerPaymentId = payment.ProviderPaymentId,
@@ -213,7 +218,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         return total;
     }
 
-    private async Task<ProviderCode> ResolveProviderAsync(
+    private async Task<ResolvedProvider> ResolveProviderAsync(
         Guid tenantId,
         Guid applicationId,
         ProviderCode? applicationDefault,
@@ -229,25 +234,30 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         if (!string.IsNullOrWhiteSpace(requested))
         {
             var explicitCode = Enum.Parse<ProviderCode>(requested, ignoreCase: true);
-            var exists = await _accounts.GetByCodeAsync(tenantId, applicationId, explicitCode, cancellationToken);
-            if (exists is null)
-                throw new InvalidOperationException($"Provider '{explicitCode}' has no active account for this application.");
+            var account = await _accounts.GetByCodeAsync(tenantId, applicationId, explicitCode, cancellationToken)
+                ?? throw new InvalidOperationException(
+                    $"Provider '{explicitCode}' has no active account for this application.");
 
-            return explicitCode;
+            return ResolvedProvider.FromAccount(account);
         }
 
         if (applicationDefault.HasValue)
         {
-            var def = await _accounts.GetDefaultAsync(tenantId, applicationId, applicationDefault.Value, cancellationToken);
-            if (def is null)
-                throw new InvalidOperationException(
+            var def = await _accounts.GetDefaultAsync(tenantId, applicationId, applicationDefault.Value, cancellationToken)
+                ?? throw new InvalidOperationException(
                     $"Default provider '{applicationDefault.Value}' has no active account for this application.");
 
-            return applicationDefault.Value;
+            return ResolvedProvider.FromAccount(def);
         }
 
         if (_environment.IsDevelopment)
-            return ProviderCode.Fake;
+        {
+            // Development fallback: no ProviderAccount persisted yet.
+            // Adapters that require credentials (AbacatePay) treat this as
+            // a controlled failure in CreateCheckoutProviderResult; Fake
+            // continues to work because it ignores credentials.
+            return ResolvedProvider.DevFallback(ProviderCode.Fake);
+        }
 
         throw new InvalidOperationException("No default provider configured for this application.");
     }
@@ -296,4 +306,33 @@ public sealed class CreateCheckoutRequestValidator : AbstractValidator<CreateChe
         RuleFor(x => x.SuccessUrl).MaximumLength(2000);
         RuleFor(x => x.CancelUrl).MaximumLength(2000);
     }
+}
+
+/// <summary>
+/// Internal helper carrying the resolved provider and the matching
+/// <c>ProviderAccount</c> so the adapter can unprotect credentials without
+/// the handler depending on any HTTP / client layer. Credentials and account
+/// id are forwarded to the adapter via <c>CreateCheckoutProviderRequest</c>
+/// init-only properties; <see cref="Environment"/> is duplicated there so
+/// adapters can branch on sandbox vs production without depending on this
+/// type.
+/// </summary>
+internal sealed record ResolvedProvider(
+    ProviderCode ProviderCode,
+    Guid ProviderAccountId,
+    ProviderEnvironment Environment,
+    string EncryptedCredentials)
+{
+    public static ResolvedProvider FromAccount(ProviderAccount account)
+        => new(account.ProviderCode, account.Id, account.Environment, account.EncryptedCredentials);
+
+    /// <summary>
+    /// Development-only fallback used when no <c>ProviderAccount</c> is
+    /// configured but the environment is Development. Always produces a
+    /// credential-less record so the Fake adapter continues to work without
+    /// an account; AbacatePay and other credentialed adapters will surface a
+    /// controlled failure in their own result.
+    /// </summary>
+    public static ResolvedProvider DevFallback(ProviderCode code)
+        => new(code, Guid.Empty, ProviderEnvironment.Sandbox, string.Empty);
 }

@@ -20,6 +20,10 @@ Status possivel: `NOT_STARTED` | `DISCOVERY` | `SPEC_DRAFTED` | `SPEC_REVIEW_REQ
 
 > **Slice 6-D (2026-06-18):** gap P1-3 (politica de bootstrap/admin seed) foi resolvido. `IBootstrapPolicy` + `BootstrapOptions` + `IDevelopmentDataSeeder` formalizam a politica: `Production` nao cria nada automaticamente (sem opt-in explicito `AllowProductionBootstrap=true`); `Development`/`Test` podem rodar seed idempotente de tenant+application apenas com `Bootstrap:Enabled=true` e `Bootstrap:SeedDevelopmentData=true`; logs nao registram API Key, secrets ou credenciais. Restam 1 gap P1 proprio da Phase 6: P1-5 (`WebhookSecret` em texto claro). Phase 6 segue `IMPLEMENTING` ate P1-5 ser resolvido.
 
+> **Slice 6-C (2026-06-25):** gap P1-5 (`ApplicationClient.WebhookSecret` persistido em texto claro) foi resolvido. `IWebhookSecretProtector` + `AesWebhookSecretProtector` passam a cifrar o segredo antes de persistir (AES-CBC com chave em `PaymentHub:WebhookSecretEncryptionKey` e prefixo `PaymentHub.ApplicationClient.WebhookSecret.v1`). DTO `ApplicationClientResponseDto` expoe apenas `hasWebhookSecret: bool`. `HttpApplicationWebhookDispatcher` chama `Unprotect` no momento da assinatura HMAC e aborta o dispatch se a decifragem falhar. Seedor de desenvolvimento protege tambem o segredo fake opcional. Phase 6 alcancou 0 gaps P1 proprios. Detalhes em `docs/audits/slice-6c-webhook-secret-protection-report-2026-06-25.md`.
+
+> **Slice 7-A (2026-06-26, sub-slices 7-A.1 a 7-A.9):** gap P1-4 (`NoopApplicationWebhookDispatcher` registrado no Worker) foi resolvido. O dispatcher HTTP real `HttpApplicationWebhookDispatcher` foi realocado para `src/PaymentHub.Infrastructure.Postgres/Webhooks/`, com lifetime Scoped, `IHttpClientFactory` nomeado ("application-webhook"), DI centralizado em `AddPaymentHubPostgres`. `OutboxDispatcherWorker` agora usa `IOutboxRepository`, `IOutboxEventStore` e `IClock` (testavel sem `DbContext` direto). Tenant guard via `_apps.GetByTenantAndIdAsync`. `OutboxEvent.LastError` passou a armazenar apenas `WebhookDispatcherCategory` + `int?` statusCode (7 categorias enum: `HttpFailure`, `NetworkError`, `Timeout`, `UnprotectFailure`, `MissingWebhookUrl`, `MissingWebhookSecret`, `UnexpectedDispatcherError`); `ex.Message` nunca e persistido. `ApplicationClient.WebhookUrl` agora e validada por `RegisterApplicationClientValidator` (HTTPS obrigatorio + bloqueio de loopback/RFC1918/link-local/IMDS/wildcard). Worker tem fail-fast de `IWebhookSecretProtector` no startup. `appsettings.json` (production) tem placeholder vazio para `PaymentHub:WebhookSecretEncryptionKey`; `appsettings.Development.json` mantem valor fake. ADRs `ADR-0007-webhook-secret-protection.md` e `ADR-0010-real-outbox-dispatcher-location.md` consolidadas. Phase 7 alcancou 0 gaps P1 proprios. Detalhes em `docs/audits/slice-7a-real-outbox-dispatcher-report-2026-06-26.md`.
+
 > **Regra para o agente:** `IMPLEMENTED` nao equivale a `VALIDATED`. Uma phase marcada como `IMPLEMENTED` pode ainda ter gaps que a impedem de ir para producao. Verificar sempre a secao "Gaps conhecidos" da phase e os registros em `docs/audits/spec-adherence-audit-2026-06-17.md` antes de tratar a phase como finalizada.
 
 ---
@@ -342,9 +346,9 @@ Esta phase e responsavel por 4 dos 5 gaps P1 da auditoria de 2026-06-17:
 - **P1-1** — Tenant/application inativos nao bloqueiam fluxos autenticados → Slice 6-A. `[RESOLVIDO 2026-06-17]`
 - **P1-2** — `RegisterProviderAccountHandler` usa tenant/application do body → Slice 6-B. `[RESOLVIDO 2026-06-18]`
 - **P1-3** — Endpoints de bootstrap/admin sem politica de autenticacao → Slice 6-D + ADR-0006. `[RESOLVIDO 2026-06-18 — Slice 6-D: IBootstrapPolicy + BootstrapOptions + DevelopmentDataSeeder]`
-- **P1-5** — `ApplicationClient.WebhookSecret` persistido em texto claro → Slice 6-C + ADR-0007.
+- **P1-5** — `ApplicationClient.WebhookSecret` persistido em texto claro → Slice 6-C + ADR-0007. `[RESOLVIDO 2026-06-25 — Slice 6-C: IWebhookSecretProtector + AesWebhookSecretProtector]`
 
-O gap P1-4 (`NoopApplicationWebhookDispatcher`) e de responsabilidade da Phase 7 (Slice 7-A), nao desta phase. No entanto, o Slice 6-C (protecao de `WebhookSecret`) e prerequisito para que o Slice 7-A possa ser validado de forma segura, pois o dispatcher HTTP usara o secret para assinar os webhooks internos.
+O gap P1-4 (`NoopApplicationWebhookDispatcher`) e de responsabilidade da Phase 7 (Slice 7-A), nao desta phase. A Slice 6-C (protecao de `WebhookSecret`) era prerequisito para que o Slice 7-A pudesse ser validado de forma segura, pois o dispatcher HTTP usara o secret para assinar os webhooks internos; esse prerequisito foi atendido em 2026-06-25.
 
 Ver `docs/audits/spec-adherence-audit-2026-06-17.md` para detalhes de cada achado.
 
@@ -358,6 +362,8 @@ Ver `docs/audits/spec-adherence-audit-2026-06-17.md` para detalhes de cada achad
 | Prioridade | P1 |
 | Esforco | M |
 | Risco | MEDIUM |
+
+> **Slice 7-A (2026-06-26):** gap P1-4 foi resolvido. Phase 7 alcancou 0 gaps P1 proprios. Continua `IMPLEMENTING` ate que gaps P2/M1/Slice 1-IT sejam fechados.
 
 ### Objetivo
 
@@ -378,20 +384,30 @@ Garantir que workers de Inbox e Outbox sejam idiomaticos, resilientes e com disp
 
 ### Entregaveis-chave
 
-- Dispatcher HTTP real registrado no Worker host.
-- Testes de retry e falha permanente.
-- Documentacao de configuracao de workers.
+- Dispatcher HTTP real registrado no Worker host. **[CONCLUIDO 2026-06-26 — Slice 7-A.1/.2/.3]**
+- Testes de retry e falha permanente. **[CONCLUIDO 2026-06-26 — Slice 7-A.8]**
+- Documentacao de configuracao de workers. **[CONCLUIDO 2026-06-26 — Slice 7-A.6 + 7-A.9]**
+- Tenant guard no dispatcher. **[CONCLUIDO 2026-06-26 — Slice 7-A.2]**
+- `LastError` seguro por categoria enum. **[CONCLUIDO 2026-06-26 — Slice 7-A.7]**
+- Validacao HTTPS/SSRF em `WebhookUrl`. **[CONCLUIDO 2026-06-26 — Slice 7-A.5]**
+- Fail-fast de chave criptografica no startup. **[CONCLUIDO 2026-06-26 — Slice 7-A.3 + 7-A.6]**
+- ADR `ADR-0007` (protecao de segredo) e `ADR-0010` (localizacao do dispatcher). **[CONCLUIDO 2026-06-26 — Slice 7-A.9]**
 
 ### Dependencias
 
 - Phase 3 (baseline do worker) — obrigatoria para iniciar qualquer slice desta phase.
-- Phase 6 Slice 6-C (protecao de `WebhookSecret`) — obrigatoria apenas para VALIDAR esta phase; Slice 7-A pode ser executado antes de Slice 6-C ser concluido.
+- Phase 6 Slice 6-C (protecao de `WebhookSecret`) — concluida em 2026-06-25. Slice 7-A foi iniciado em paralelo e concluído apos Slice 6-C.
 
-> **Nota de dependencia parcial:** A dependencia em Phase 6 nao e total. Slice 7-A (substituir `NoopApplicationWebhookDispatcher` por HTTP real) pode comecar antes que Phase 6 esteja concluida. A restricao e: Phase 7 so pode ser marcada como `VALIDATED` depois que o Slice 6-C estiver concluido, pois o dispatcher HTTP real usara `WebhookSecret` para assinar os payloads. Iniciar Phase 7 antes de Phase 6 e intencional — ver `docs/roadmap/001-development-timeline.md`, secao "Timeline Decision".
+> **Nota de dependencia parcial:** A dependencia em Phase 6 nao e total. Slice 7-A (substituir `NoopApplicationWebhookDispatcher` por HTTP real) pode comecar antes que Phase 6 esteja concluida. A restricao e: Phase 7 so pode ser marcada como `VALIDATED` depois que o Slice 6-C estiver concluido, pois o dispatcher HTTP real usara `WebhookSecret` para assinar os payloads. Slice 6-C foi concluido em 2026-06-25; Slice 7-A foi concluido em 2026-06-26.
 
-### Gaps conhecidos (P1)
+### Gaps conhecidos
 
-- **P1-4** — `NoopApplicationWebhookDispatcher` registrado no Worker host (gap P1 compartilhado com Phase 3, de responsabilidade desta phase) → Slice 7-A.
+- ~~**P1-4** — `NoopApplicationWebhookDispatcher` registrado no Worker host (gap P1 compartilhado com Phase 3, de responsabilidade desta phase) → Slice 7-A.~~ `[RESOLVIDO 2026-06-26 — Slice 7-A]`
+- **P2 / M1-security** — Sweep automatico de eventos `Processing` orfaos (recovery apos crash do Worker). Multi-instancia nao e problema no MVP single-instance; sera relevante quando Phase 7 multi-instancia for introduzida.
+- **C.3-qa** — Concorrencia multi-instancia via `FOR UPDATE SKIP LOCKED`. Nao e problema em single-instance; sera necessario quando Worker for escalado horizontalmente.
+- **Slice 1-IT** — Testes de integracao com Postgres/migrations (P2-2). Cobertura zero ate Slice 1-IT.
+- **B4-security** — Headers adicionais (`X-PaymentHub-Event-Type`/`X-PaymentHub-Tenant`/`X-PaymentHub-Application`) deferred; HMAC ja garante autenticidade.
+- **API appsettings** — `src/PaymentHub.Api/appsettings.json` ainda sem placeholder `PaymentHub` (paridade com Worker). Mesmo gap do Slice 7-A.6, fora de escopo.
 
 ---
 
@@ -527,7 +543,7 @@ Agrupar evolucoes de produto post-MVP que dependem de validacao de mercado ou de
 | 4 | Multi-Provider | `SPEC_DRAFTED` | P1 | L | MEDIUM |
 | 5 | Painel Admin | `NOT_STARTED` | P2 | XL | MEDIUM |
 | 6 | Seguranca e Confiabilidade | `IMPLEMENTING` | P1 | M | HIGH |
-| 7 | Workers, Outbox e Processamento Assincrono | `IMPLEMENTING` | P1 | M | MEDIUM |
+| 7 | Workers, Outbox e Processamento Assincrono | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-26 — Slice 7-A) | P1 | M | MEDIUM |
 | 8 | Conciliacao Financeira | `NOT_STARTED` | P2 | XL | HIGH |
 | 9 | Relatorios, Metricas e Observabilidade | `SPEC_DRAFTED` | P2 | L | LOW |
 | 10 | Evolucoes Futuras de Produto | `NOT_STARTED` | P3 | XL | HIGH |

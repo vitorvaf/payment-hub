@@ -8,15 +8,29 @@ public class ApplicationClient
     public Guid TenantId { get; private set; }
     public string Name { get; private set; } = string.Empty;
     public string? WebhookUrl { get; private set; }
+
+    /// <summary>
+    /// Stores the protected webhook secret (encrypted at rest). Callers MUST pass an already-protected value.
+    /// Use <see cref="HasWebhookSecret"/> for safe metadata exposure and never expose this property
+    /// directly through DTOs or logs.
+    /// </summary>
     public string? WebhookSecret { get; private set; }
+
     public ProviderCode? DefaultProvider { get; private set; }
     public ApplicationStatus Status { get; private set; } = ApplicationStatus.Active;
     public DateTime CreatedAt { get; private set; }
     public DateTime UpdatedAt { get; private set; }
 
+    public bool HasWebhookSecret => !string.IsNullOrEmpty(WebhookSecret);
+
     private ApplicationClient() { }
 
-    public ApplicationClient(Guid id, Guid tenantId, string name, string? webhookUrl = null)
+    public ApplicationClient(
+        Guid id,
+        Guid tenantId,
+        string name,
+        string? webhookUrl = null,
+        string? protectedWebhookSecret = null)
     {
         if (id == Guid.Empty) throw new ArgumentException("Id is required.", nameof(id));
         if (tenantId == Guid.Empty) throw new ArgumentException("TenantId is required.", nameof(tenantId));
@@ -26,15 +40,16 @@ public class ApplicationClient
         TenantId = tenantId;
         Name = name.Trim();
         WebhookUrl = string.IsNullOrWhiteSpace(webhookUrl) ? null : webhookUrl.Trim();
+        WebhookSecret = string.IsNullOrWhiteSpace(protectedWebhookSecret) ? null : protectedWebhookSecret;
         Status = ApplicationStatus.Active;
         CreatedAt = DateTime.UtcNow;
         UpdatedAt = CreatedAt;
     }
 
-    public void UpdateWebhook(string? webhookUrl, string? webhookSecret)
+    public void UpdateWebhook(string? webhookUrl, string? protectedWebhookSecret)
     {
         WebhookUrl = string.IsNullOrWhiteSpace(webhookUrl) ? null : webhookUrl.Trim();
-        WebhookSecret = string.IsNullOrWhiteSpace(webhookSecret) ? null : webhookSecret;
+        WebhookSecret = string.IsNullOrWhiteSpace(protectedWebhookSecret) ? null : protectedWebhookSecret;
         UpdatedAt = DateTime.UtcNow;
     }
 

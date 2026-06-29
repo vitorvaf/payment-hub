@@ -7,6 +7,7 @@ using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Bootstrap;
 using PaymentHub.Domain.Entities;
 using PaymentHub.Domain.Enums;
+using PaymentHub.UnitTests.Support;
 
 namespace PaymentHub.UnitTests.Application;
 
@@ -16,6 +17,7 @@ public class DevelopmentDataSeederTests
     private readonly Mock<ITenantRepository> _tenants = new(MockBehavior.Strict);
     private readonly Mock<IApplicationClientRepository> _applications = new(MockBehavior.Strict);
     private readonly Mock<IUnitOfWork> _uow = new(MockBehavior.Strict);
+    private readonly FakeWebhookSecretProtector _protector = new();
 
     public DevelopmentDataSeederTests()
     {
@@ -200,6 +202,7 @@ public class DevelopmentDataSeederTests
             _tenants.Object,
             _applications.Object,
             _uow.Object,
+            _protector,
             logger);
 
         await seeder.SeedAsync(CancellationToken.None);
@@ -234,6 +237,7 @@ public class DevelopmentDataSeederTests
             _tenants.Object,
             _applications.Object,
             _uow.Object,
+            _protector,
             NullLogger<DevelopmentDataSeeder>.Instance);
 
         var outcome = await seeder.SeedAsync(CancellationToken.None);
@@ -270,6 +274,139 @@ public class DevelopmentDataSeederTests
         outcome.EnvironmentName.Should().Be("Production");
     }
 
+    [Fact]
+    public async Task SeedAsync_ShouldPersistProtectedWebhookSecret_WhenDevelopmentWebhookSecretProvided()
+    {
+        _policy.SetupGet(p => p.ShouldRunDevelopmentSeed).Returns(true);
+        _policy.SetupGet(p => p.IsProduction).Returns(false);
+        _policy.SetupGet(p => p.EnvironmentName).Returns("Development");
+
+        const string rawDevSecret = "raw-dev-webhook-secret-plain";
+
+        ApplicationClient? persistedApp = null;
+        _tenants.Setup(r => r.GetBySlugAsync("dev-tenant", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Tenant?)null);
+        _tenants.Setup(r => r.AddAsync(It.IsAny<Tenant>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _applications.Setup(r => r.GetByTenantAndNameAsync(It.IsAny<Guid>(), "dev-app", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApplicationClient?)null);
+        _applications.Setup(r => r.AddAsync(It.IsAny<ApplicationClient>(), It.IsAny<CancellationToken>()))
+            .Callback<ApplicationClient, CancellationToken>((a, _) => persistedApp = a)
+            .Returns(Task.CompletedTask);
+
+        var seeder = new DevelopmentDataSeeder(
+            _policy.Object,
+            Microsoft.Extensions.Options.Options.Create(new BootstrapOptions
+            {
+                Enabled = true,
+                SeedDevelopmentData = true,
+                DevelopmentTenantSlug = "dev-tenant",
+                DevelopmentApplicationName = "dev-app",
+                DevelopmentWebhookSecret = rawDevSecret
+            }),
+            _tenants.Object,
+            _applications.Object,
+            _uow.Object,
+            _protector,
+            NullLogger<DevelopmentDataSeeder>.Instance);
+
+        await seeder.SeedAsync(CancellationToken.None);
+
+        persistedApp.Should().NotBeNull();
+        persistedApp!.WebhookSecret.Should().NotBeNull();
+        persistedApp.WebhookSecret.Should().NotBe(rawDevSecret, "raw secret must never be stored");
+        persistedApp.WebhookSecret.Should().StartWith(FakeWebhookSecretProtector.Marker);
+        persistedApp.HasWebhookSecret.Should().BeTrue();
+        // Round-trip via the protector: the persisted value must be unprotectable to the original raw.
+        _protector.Unprotect(persistedApp.WebhookSecret!).Should().Be(rawDevSecret);
+    }
+
+    [Fact]
+    public async Task SeedAsync_ShouldNotPersistWebhookSecret_WhenDevelopmentWebhookSecretNotProvided()
+    {
+        _policy.SetupGet(p => p.ShouldRunDevelopmentSeed).Returns(true);
+        _policy.SetupGet(p => p.IsProduction).Returns(false);
+        _policy.SetupGet(p => p.EnvironmentName).Returns("Development");
+
+        ApplicationClient? persistedApp = null;
+        _tenants.Setup(r => r.GetBySlugAsync("dev-tenant", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Tenant?)null);
+        _tenants.Setup(r => r.AddAsync(It.IsAny<Tenant>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _applications.Setup(r => r.GetByTenantAndNameAsync(It.IsAny<Guid>(), "dev-app", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApplicationClient?)null);
+        _applications.Setup(r => r.AddAsync(It.IsAny<ApplicationClient>(), It.IsAny<CancellationToken>()))
+            .Callback<ApplicationClient, CancellationToken>((a, _) => persistedApp = a)
+            .Returns(Task.CompletedTask);
+
+        var seeder = new DevelopmentDataSeeder(
+            _policy.Object,
+            Microsoft.Extensions.Options.Options.Create(new BootstrapOptions
+            {
+                Enabled = true,
+                SeedDevelopmentData = true,
+                DevelopmentTenantSlug = "dev-tenant",
+                DevelopmentApplicationName = "dev-app",
+                DevelopmentWebhookSecret = null
+            }),
+            _tenants.Object,
+            _applications.Object,
+            _uow.Object,
+            _protector,
+            NullLogger<DevelopmentDataSeeder>.Instance);
+
+        await seeder.SeedAsync(CancellationToken.None);
+
+        persistedApp.Should().NotBeNull();
+        persistedApp!.WebhookSecret.Should().BeNull();
+        persistedApp.HasWebhookSecret.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SeedAsync_ShouldNotLogRawWebhookSecret()
+    {
+        _policy.SetupGet(p => p.ShouldRunDevelopmentSeed).Returns(true);
+        _policy.SetupGet(p => p.IsProduction).Returns(false);
+        _policy.SetupGet(p => p.EnvironmentName).Returns("Development");
+
+        const string rawDevSecret = "raw-dev-webhook-secret-plain";
+
+        _tenants.Setup(r => r.GetBySlugAsync("dev-tenant", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Tenant?)null);
+        _tenants.Setup(r => r.AddAsync(It.IsAny<Tenant>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _applications.Setup(r => r.GetByTenantAndNameAsync(It.IsAny<Guid>(), "dev-app", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApplicationClient?)null);
+        _applications.Setup(r => r.AddAsync(It.IsAny<ApplicationClient>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var logger = new RecordingLogger<DevelopmentDataSeeder>();
+        var seeder = new DevelopmentDataSeeder(
+            _policy.Object,
+            Microsoft.Extensions.Options.Options.Create(new BootstrapOptions
+            {
+                Enabled = true,
+                SeedDevelopmentData = true,
+                DevelopmentTenantSlug = "dev-tenant",
+                DevelopmentApplicationName = "dev-app",
+                DevelopmentWebhookSecret = rawDevSecret
+            }),
+            _tenants.Object,
+            _applications.Object,
+            _uow.Object,
+            _protector,
+            logger);
+
+        await seeder.SeedAsync(CancellationToken.None);
+
+        logger.Messages.Should().NotBeEmpty();
+        foreach (var message in logger.Messages)
+        {
+            message.Should().NotContainEquivalentOf(rawDevSecret);
+            message.Should().NotContainEquivalentOf(FakeWebhookSecretProtector.Marker);
+        }
+    }
+
     private DevelopmentDataSeeder CreateSeeder()
         => new(
             _policy.Object,
@@ -283,6 +420,7 @@ public class DevelopmentDataSeederTests
             _tenants.Object,
             _applications.Object,
             _uow.Object,
+            _protector,
             NullLogger<DevelopmentDataSeeder>.Instance);
 
     private sealed class RecordingLogger<T> : ILogger<T>

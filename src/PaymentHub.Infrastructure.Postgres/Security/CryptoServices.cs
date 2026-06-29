@@ -77,6 +77,71 @@ public sealed class AesCredentialProtector : ICredentialProtector
     }
 }
 
+public sealed class AesWebhookSecretProtector : IWebhookSecretProtector
+{
+    private const string Purpose = "PaymentHub.ApplicationClient.WebhookSecret.v1";
+    private readonly byte[] _key;
+
+    public AesWebhookSecretProtector(IOptions<PaymentHubOptions> options)
+    {
+        var raw = options.Value.WebhookSecretEncryptionKey;
+        if (string.IsNullOrWhiteSpace(raw))
+            throw new InvalidOperationException("PaymentHub:WebhookSecretEncryptionKey is required.");
+        if (raw.Length < 32) raw = raw.PadRight(32, '0');
+        _key = Encoding.UTF8.GetBytes(raw.Substring(0, 32));
+    }
+
+    public string Protect(string plainTextSecret)
+    {
+        if (plainTextSecret is null) throw new ArgumentNullException(nameof(plainTextSecret));
+        if (string.IsNullOrEmpty(plainTextSecret))
+            throw new ArgumentException("Webhook secret cannot be empty.", nameof(plainTextSecret));
+
+        var payload = $"{Purpose}|{plainTextSecret}";
+        using var aes = Aes.Create();
+        aes.Key = _key;
+        aes.GenerateIV();
+        using var encryptor = aes.CreateEncryptor();
+        var plainBytes = Encoding.UTF8.GetBytes(payload);
+        var cipherBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
+        var result = new byte[aes.IV.Length + cipherBytes.Length];
+        Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
+        Buffer.BlockCopy(cipherBytes, 0, result, aes.IV.Length, cipherBytes.Length);
+        return Convert.ToBase64String(result);
+    }
+
+    public string Unprotect(string protectedSecret)
+    {
+        if (protectedSecret is null) throw new ArgumentNullException(nameof(protectedSecret));
+        if (string.IsNullOrEmpty(protectedSecret))
+            throw new ArgumentException("Protected webhook secret cannot be empty.", nameof(protectedSecret));
+
+        var data = Convert.FromBase64String(protectedSecret);
+        using var aes = Aes.Create();
+        aes.Key = _key;
+        var iv = new byte[16];
+        Buffer.BlockCopy(data, 0, iv, 0, 16);
+        aes.IV = iv;
+        using var decryptor = aes.CreateDecryptor();
+        var cipherBytes = new byte[data.Length - 16];
+        Buffer.BlockCopy(data, 16, cipherBytes, 0, cipherBytes.Length);
+        var plainBytes = decryptor.TransformFinalBlock(cipherBytes, 0, cipherBytes.Length);
+        var plain = Encoding.UTF8.GetString(plainBytes);
+
+        var separator = plain.IndexOf('|');
+        if (separator < 0)
+            throw new InvalidOperationException("Protected webhook secret purpose mismatch.");
+
+        var purpose = plain[..separator];
+        if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(purpose),
+                Encoding.UTF8.GetBytes(Purpose)))
+            throw new InvalidOperationException("Protected webhook secret purpose mismatch.");
+
+        return plain[(separator + 1)..];
+    }
+}
+
 public sealed class HmacWebhookSigner : IWebhookSigner
 {
     public string Sign(string payload, string secret)

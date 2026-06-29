@@ -9,11 +9,20 @@ using PaymentHub.Infrastructure.Postgres.Outbox;
 using PaymentHub.Infrastructure.Postgres.Options;
 using PaymentHub.Infrastructure.Postgres.Repositories;
 using PaymentHub.Infrastructure.Postgres.Security;
+using PaymentHub.Infrastructure.Postgres.Webhooks;
 
 namespace PaymentHub.Infrastructure.Postgres;
 
 public static class PostgresServiceCollectionExtensions
 {
+    /// <summary>
+    /// Named HttpClient consumed by <see cref="HttpApplicationWebhookDispatcher"/>. The name is
+    /// referenced by the dispatcher via <c>IHttpClientFactory.CreateClient(name)</c>. Co-located
+    /// with the dispatcher registration so a host that calls <c>AddPaymentHubPostgres</c> ends
+    /// up with a fully wired outbound webhook pipeline (Slice 7-A, ADR-0010).
+    /// </summary>
+    public const string ApplicationWebhookHttpClientName = "application-webhook";
+
     public static IServiceCollection AddPaymentHubPostgres(
         this IServiceCollection services,
         IConfiguration configuration)
@@ -37,12 +46,20 @@ public static class PostgresServiceCollectionExtensions
         services.AddScoped<IAuditLogRepository, AuditLogRepository>();
         services.AddScoped<Application.Abstractions.Outbox.IOutboxRepository, OutboxRepository>();
         services.AddScoped<IOutboxPublisher, OutboxPublisher>();
+        services.AddScoped<IOutboxEventStore, EfOutboxEventStore>();
 
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IApiKeyHasher, HmacApiKeyHasher>();
         services.AddSingleton<ICredentialProtector, AesCredentialProtector>();
+        services.AddSingleton<IWebhookSecretProtector, AesWebhookSecretProtector>();
         services.AddSingleton<IWebhookSigner, HmacWebhookSigner>();
         services.AddSingleton<IIdempotencyRequestHasher, Sha256IdempotencyRequestHasher>();
+
+        // Outbound webhook dispatcher (Slice 7-A, resolves P1-4). Co-located with the HttpClient
+        // factory registration so API and Worker hosts end up with the same named client and
+        // the same dispatcher implementation.
+        services.AddHttpClient(ApplicationWebhookHttpClientName);
+        services.AddScoped<IApplicationWebhookDispatcher, HttpApplicationWebhookDispatcher>();
 
         return services;
     }

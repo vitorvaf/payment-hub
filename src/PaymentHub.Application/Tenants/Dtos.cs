@@ -10,6 +10,7 @@ public sealed record RegisterApplicationClientRequestDto(
     Guid TenantId,
     string Name,
     string? WebhookUrl,
+    string? WebhookSecret,
     ProviderCode? DefaultProvider);
 
 public sealed record ApplicationClientResponseDto(
@@ -17,6 +18,7 @@ public sealed record ApplicationClientResponseDto(
     Guid TenantId,
     string Name,
     string? WebhookUrl,
+    bool HasWebhookSecret,
     ProviderCode? DefaultProvider,
     string Status,
     string? ApiKey);

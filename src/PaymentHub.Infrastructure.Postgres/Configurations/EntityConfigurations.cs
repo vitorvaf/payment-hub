@@ -148,7 +148,14 @@ public class WebhookEventConfiguration : IEntityTypeConfiguration<WebhookEvent>
         builder.Property(w => w.ProviderCode).HasColumnName("provider_code").HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.Property(w => w.ProviderEventId).HasColumnName("provider_event_id").HasMaxLength(200);
         builder.Property(w => w.EventType).HasColumnName("event_type").HasMaxLength(80).IsRequired();
-        builder.Property(w => w.RawPayloadJson).HasColumnName("raw_payload").HasColumnType("jsonb").IsRequired();
+        // Slice 3-IT fix: raw_payload MUST be byte-preserving so HMAC
+        // signature verification works end-to-end. Postgres `jsonb` parses
+        // and normalises the JSON on insert, which mutates whitespace
+        // (single space after every colon/comma) and breaks HMAC over the
+        // raw body. The application treats the payload as opaque (it is
+        // passed straight to the provider adapter for verification +
+        // normalization), so `text` is the correct storage type.
+        builder.Property(w => w.RawPayloadJson).HasColumnName("raw_payload").HasColumnType("text").IsRequired();
         builder.Property(w => w.Signature).HasColumnName("signature").HasMaxLength(500);
         builder.Property(w => w.ProcessingStatus).HasColumnName("processing_status").HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.Property(w => w.RetryCount).HasColumnName("retry_count").IsRequired();

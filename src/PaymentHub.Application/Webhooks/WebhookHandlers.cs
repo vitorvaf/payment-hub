@@ -201,10 +201,20 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
             var newStatus = PaymentStatusMapper.FromProviderStatus(webhook.ProviderCode.ToString(), parsed.ProviderStatus ?? parsed.EventType);
             var previousStatus = payment.Status;
             var statusChanged = payment.ApplyProviderStatus(newStatus, providerPaymentId);
-            payment.RegisterAttempt(
+            // Slice 3-IT fix: explicitly add the new PaymentAttempt via the
+            // repository. EF Core's collection navigation change detector
+            // does NOT pick up items added via the entity's collection
+            // property (Payment.Attempts is an IReadOnlyCollection backed
+            // by a private List) — they end up tracked as Modified instead
+            // of Added, which causes the subsequent UPDATE to match 0 rows
+            // because there is no existing row with the new Id. Calling
+            // _payments.AddAttemptAsync ensures EF tracks the entity as
+            // Added and issues the correct INSERT.
+            var attempt = payment.RegisterAttempt(
                 ToAttemptStatus(newStatus),
                 providerPaymentId,
                 null);
+            await _payments.AddAttemptAsync(attempt, cancellationToken);
 
             if (statusChanged && previousStatus != newStatus)
             {

@@ -85,6 +85,7 @@ Com base no estado atual (`IMPLEMENTING` em Phases 2, 3, 6, 7) e nos achados P1 
 6. **Slice 1-IT**: Criar primeira fixture de integracao com Postgres (migrations + indices). `[CONCLUIDO 2026-06-26]`
 7. **Slice 2-A**: Implementar adapter AbacatePay funcional com validacao de assinatura de webhook. `[CONCLUIDO 2026-06-27 — client HTTP com Bearer Token, mapper estendido, Adapter refatorado, DI/options/HttpClient registrados, 57 testes AbacatePay + 348 totais, arquitetura/docs-checks verdes; webhooks externos/HMAC ficam em Slice 2-B]`
 8. **Slice 2-B**: Webhooks externos AbacatePay com HMAC-SHA256 (Base64) + normalizacao de eventos `transparent.*` + fail-fast no controller + roteamento por metadata no handler. `[CONCLUIDO 2026-06-29 — 9 testes adapter + 14 testes normalizer + 10 testes verifier + 9 testes handler AbacatePay + 9 testes controller + 418 totais; arquitetura/docs-checks verdes]`
+9. **Slice 3-IT**: Testes E2E do API + Postgres (Testcontainers) + adapter AbacatePay real + fakes de transporte outbound, cobrindo o fluxo de checkout e webhooks externos (4 testes P1: `CreateCheckout_WithAbacatePayFake_PersistsPaymentAndOutbox`, `ProviderWebhook_ValidSignature_UpdatesPaymentAndEnqueuesOutbox`, `ProviderWebhook_DuplicateAbacatePayEvent_IsIdempotent`, `ProviderWebhook_MissingSignature_Rejected401WithoutPersist`). `[CONCLUIDO 2026-06-29 — 14 testes integracao (10 Slice 1-IT preservados + 4 novos), 422 totais; arquitetura/docs-checks verdes; 2 producao bugs encontrados e corrigidos (jsonb -> text em `webhook_events.raw_payload`; `_payments.AddAttemptAsync(attempt, ct)` explicito no `ProcessWebhookEventHandler`)]`
 
 ## Slices concluidos apos a geracao inicial (2026-06-26)
 
@@ -102,7 +103,7 @@ Phase 6 e Phase 7 alcancaram 0 gaps P1 proprios em 2026-06-25 e 2026-06-26, resp
 
 Phase 2 (Phase 2 — Primeiro adapter de provider) atinge seu primeiro marco de implementacao com o Slice 2-A em 2026-06-27. Detalhes em `docs/audits/slice-2a-abacatepay-sandbox-report-2026-06-26.md`. Webhooks externos completos (HMAC, normalizacao de eventos) seguem em **Slice 2-B** (a abrir), dependente apenas de decisao de produto entre Phase 2 e Phase 3.
 
-Slices de integracao end-to-end (middleware/checkout/workers com banco real) seguem dependentes de decisao entre Phase 2 e Phase 7. Slice 1-IT (base de testes de integracao com Postgres) foi concluido em 2026-06-26 e permanece verde apos Slice 2-A.
+Slices de integracao end-to-end (middleware/checkout/workers com banco real) seguem dependentes de decisao entre Phase 2 e Phase 7. Slice 1-IT (base de testes de integracao com Postgres) foi concluido em 2026-06-26 e permanece verde apos Slice 2-A e Slice 3-IT.
 
 ---
 

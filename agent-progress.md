@@ -4,6 +4,20 @@ Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e v
 
 ## Historico
 
+### 2026-06-29 - Slice 3-IT fechado (conclusao + 2 producao bugs descobertos por E2E)
+
+- Data: 2026-06-29
+- Agente/superficie: OpenCode (Implementer)
+- Sub-slices entregues: 3-IT.1 (PaymentHubApiFactory + AbacatePayFakeHttpHandler + ApplicationWebhookCaptureHandler + E2ESeedHelpers), 3-IT.2 (4 testes P1 E2E), 3-IT.3 (jsonb->text em `webhook_events.raw_payload` + migracao `20260629205545_ChangeRawPayloadToText`), 3-IT.4 (`_payments.AddAttemptAsync(attempt, ct)` explicito no `ProcessWebhookEventHandler.ProcessAsync`), 3-IT.5 (mock setup em `ProcessWebhookEventHandlerAbacatePayTests.BuildCommonMocks`).
+- Q1-Q7 respondidas em `docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md`.
+- 2 producao bugs descobertos por E2E testing (unit tests nao cobriam o roundtrip via Postgres ou o change detector do EF Core 10):
+  - **(a)** `webhook_events.raw_payload` era `jsonb`, que reformata JSON (insere espacos, normaliza chaves) no insert e quebra HMAC sobre o body bruto. Migracao `jsonb -> text` aplicada; coluna agora preserva bytes exatos.
+  - **(b)** `ProcessWebhookEventHandler.ProcessAsync` chamava apenas `payment.RegisterAttempt(...)` (que faz `_attempts.Add(attempt)` na collection navigation privada) — o EF Core 10 nao detecta confiavelmente o novo item como Added em testes, classificando-o como Modified e levantando `DbUpdateConcurrencyException` no UPDATE subsequente (0 rows afetadas, Guid novo sem row). Solucao: chamar `_payments.AddAttemptAsync(attempt, ct)` apos `RegisterAttempt(...)`, garantindo o tracking correto.
+- Validacao final: `dotnet build PaymentHub.slnx` (0/0 em 9 projetos); `dotnet test PaymentHub.slnx` (422 passed: 418 baseline + 4 E2E); `dotnet test PaymentHub.IntegrationTests.csproj` (14 passed: 10 Slice 1-IT + 4 Slice 3-IT); `scripts/agent-architecture-check.sh` e `scripts/agent-docs-check.sh` verdes; `git diff --check` limpo.
+- Phase 7 mantem `IMPLEMENTING` (Slice 3-IT enderecou e2e API+Postgres+Provider; ainda faltam slices para OutboxDispatcherWorker hospedado em TestServer e multi-instancia em Phase 7-IT).
+- P2-2 do phase board (`Projeto de testes de integracao sem testes e2e`) passa de `PARCIALMENTE RESOLVIDO` para `RESOLVIDO 2026-06-29`.
+- Docs atualizadas: `docs/harness/validation-matrix.md`, `docs/roadmap/001-development-timeline.md`, `docs/roadmap/002-phase-status-board.md`, `docs/harness/learnings.md`, `feature_list.md`.
+
 ### 2026-06-29 - Slice 2-B fechado (conclusao + commit)
 
 - Data: 2026-06-29
@@ -17,6 +31,107 @@ Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e v
 - Push: `origin dev`.
 
 ## Entrada atual
+
+### Slice 4-H — Proximo slice apos Slice 3-IT
+
+Status: PLANEJADO
+
+## Objetivo
+
+Validar o fluxo completo do Payment Hub em integracao usando API/TestServer, Postgres real e providers fakeados, sem chamadas externas reais.
+
+## Discovery
+
+### Estado atual dos testes de integracao
+
+- `tests/PaymentHub.IntegrationTests` ja possui base do Slice 1-IT com `PostgresFixture`, `PostgresCollection`, `IntegrationTestFactory`, migrations via Testcontainers (`postgres:16-alpine`) e reset por `TRUNCATE ... RESTART IDENTITY CASCADE`.
+- A fixture atual usa DI manual minimo e referencia `PaymentHub.Domain`, `PaymentHub.Application` e `PaymentHub.Infrastructure.Postgres`; ainda nao referencia `PaymentHub.Api`, `PaymentHub.Infrastructure.Providers` nem `Microsoft.AspNetCore.Mvc.Testing`.
+- Testes existentes cobrem migrations, repositorios principais, protecao de `WebhookSecret`, `ProviderAccount`, Outbox persistence e query de pendentes. Ainda nao ha teste HTTP/API end-to-end.
+
+### Estado atual da API/TestServer
+
+- `src/PaymentHub.Api/Program.cs` termina com `public partial class Program { }`, entao `WebApplicationFactory<Program>` e viavel.
+- A API registra `AddPaymentHubPostgres`, `AddPaymentHubProviders`, controllers, validators, middleware de API Key, handlers de checkout/webhook/pagamentos e seeder de desenvolvimento.
+- O factory de teste deve sobrescrever `ConnectionStrings:Postgres`, `PaymentHub:*`, `Providers:AbacatePay:*` e `Bootstrap:*` via configuracao in-memory, com `Bootstrap:Enabled=false` para evitar seed automatico.
+- Para nao chamar internet, o teste deve substituir os named HttpClients `abacatepay` e, se usado, `application-webhook` por handlers fake/capturados.
+
+### Fluxo create checkout
+
+- `POST /api/v1/checkouts` exige `Authorization: Bearer <api_key>`, `X-Tenant-Id`, `X-Application-Id` e `Idempotency-Key`.
+- `ApiKeyAuthenticationMiddleware` valida hash da API key, tenant/application ativos e popula `ITenantContext`.
+- `CreateCheckoutHandler` resolve `ProviderAccount` por `X-Provider` explicito ou default da application, passa `ProviderAccountId`, `ProviderEnvironment` e `EncryptedCredentials` para `CreateCheckoutProviderRequest`.
+- `AbacatePayProviderAdapter` desprotege credenciais, extrai `apiKey`, chama `IAbacatePayClient.CreateTransparentPixAsync`, persiste `Payment`, `PaymentAttempt`, `IdempotencyKey` e cria `OutboxEvent` `payment.checkout.created`.
+- A resposta publica atual de checkout contem `paymentId`, `status`, `provider` e `checkoutUrl`; `brCode`/`brCodeBase64` ficam em `RawResponseJson` do adapter e nao fazem parte do DTO publico atual. O teste deve validar o contrato atual e registrar o gap se campos PIX publicos forem exigidos.
+
+### Fluxo webhook externo
+
+- Endpoint real: `POST /api/v1/webhooks/{providerCode}`; o middleware libera `/api/v1/webhooks/` sem API Key.
+- `ProviderWebhooksController` le raw body, exige `X-Webhook-Signature` para AbacatePay antes de persistir e chama `IReceiveProviderWebhookHandler`.
+- `ReceiveProviderWebhookHandler` apenas persiste ou deduplica `WebhookEvent`; ele nao processa o evento nem aciona worker dentro do request HTTP.
+- Para E2E deste slice, o teste deve enviar o POST real para a API e depois executar `IProcessWebhookEventHandler.ProcessAsync(webhookId)` em scope do factory para simular a iteracao do worker de Inbox, sem alterar comportamento de producao.
+
+### Fluxo Inbox/Outbox
+
+- Deduplicacao de Inbox usa `providerCode + providerEventId` quando `X-Provider-Event-Id` esta presente. Para AbacatePay, os testes devem enviar o id do envelope tambem nesse header para exercitar a politica existente.
+- `ProcessWebhookEventHandler` marca `WebhookEvent` como `Processing`, resolve `ProviderAccount` AbacatePay por metadata `data.metadata.{tenantId,applicationId,paymentId}`, desprotege `webhookSecret`, chama o adapter, aplica status canonico no `Payment`, registra `PaymentAttempt` e cria `OutboxEvent` apenas quando ha mudanca de status.
+- Webhook duplicado deve retornar o mesmo `webhookId` e nao gerar novo processamento efetivo nem novo `OutboxEvent`.
+- Webhook sem assinatura AbacatePay deve retornar `401` antes de qualquer gravacao em `webhook_events`.
+
+### Estrategia de fake provider
+
+- Usar o `AbacatePayProviderAdapter` real e o `AbacatePayClient` real no principal teste E2E.
+- Fakear somente o transporte HTTP externo com `HttpMessageHandler` associado ao named client `abacatepay`.
+- O fake deve capturar request, validar `POST /transparents/create`, `Authorization: Bearer test-abacatepay-api-key`, metadata e amount, e responder envelope `success=true` com `id`, `status`, `brCode`, `brCodeBase64`, `expiresAt` e `devMode`.
+- Credenciais do `ProviderAccount` devem usar JSON fake protegido por `ICredentialProtector`, por exemplo `{ "apiKey": "test-abacatepay-api-key", "webhookSecret": "test-abacatepay-webhook-secret" }`.
+
+### Estrategia de fake ApplicationClient webhook receiver
+
+- P2 neste slice: se couber sem refactor amplo, substituir o named client `application-webhook` por handler fake/capturado e exercitar `IApplicationWebhookDispatcher` real ou uma iteracao testavel do dispatcher.
+- `OutboxDispatcherWorker.DispatchOnceAsync` e `internal`; se `InternalsVisibleTo("PaymentHub.IntegrationTests")` for pequeno e seguro, pode ser avaliado. Caso contrario, testar o dispatcher real diretamente via DI e registrar Worker completo para Slice 7-IT.
+- Se o dispatcher interno ficar fora do slice, o P1 continua sendo provar que o `OutboxEvent` interno foi criado com payload seguro e correto.
+
+### Testes previstos
+
+- P1: `CreateCheckout_ShouldCreateTransparentPix_WithAbacatePayFake_AndPersistAttempt`.
+- P1: `ProviderWebhook_ShouldValidateAbacatePaySignature_UpdatePayment_AndCreateOutbox`.
+- P1: `ProviderWebhook_ShouldBeIdempotent_WhenSameAbacatePayEventIsReceivedTwice`.
+- P1: `ProviderWebhook_ShouldRejectAbacatePayWithoutSignature_BeforePersisting`.
+- P2: `OutboxDispatcher_ShouldSendInternalWebhook_ToApplicationClientReceiver`, se viavel sem refactor amplo.
+- P2: `ProviderWebhook_ShouldHandleUnknownPaymentSafely`, se couber apos os quatro P1.
+
+### Riscos e gaps
+
+- TestServer nao roda o `WebhookProcessorWorker`; a execucao explicita de `IProcessWebhookEventHandler.ProcessAsync` no teste sera registrada como decisao de testabilidade do Slice 3-IT.
+- `OutboxDispatcherWorker.DispatchOnceAsync` nao e publico para integration tests. Evitar refactor amplo; se necessario, documentar dispatcher completo para Slice 7-IT.
+- A resposta publica de checkout ainda nao expoe `brCode`/`brCodeBase64`; o teste deve validar ausencia de credential/apiKey e o contrato atual, registrando gap de API se campos PIX forem exigidos.
+- `src/PaymentHub.Api/appsettings.json` ainda nao tem placeholder production de `PaymentHub`; o factory de teste deve fornecer valores fake em memoria sem commitar segredo real.
+- Assinatura invalida AbacatePay atualmente e persistida como `WebhookEvent` e falha no processamento, porque o controller so consegue fail-fast para assinatura ausente; o teste deve cobrir o comportamento real ou registrar a politica.
+
+## Plano de implementacao
+
+1. Adicionar suporte de `WebApplicationFactory<Program>` no projeto de integracao, com referencias/pacotes minimos e sem alterar contratos publicos.
+2. Criar `PaymentHubApiFactory` reutilizando `PostgresFixture`, sobrescrevendo configuracao da API para Postgres real, chaves fake, AbacatePay fake e bootstrap desligado.
+3. Criar fakes de HTTP para AbacatePay e, opcionalmente, para webhook interno de `ApplicationClient`.
+4. Adicionar helpers de seed para tenant/application/API key/provider account com secrets fake protegidos por `ICredentialProtector`/`IWebhookSecretProtector`.
+5. Implementar os quatro testes P1 E2E com isolamento por `ResetDatabaseAsync` e ids unicos por teste.
+6. Se couber sem refactor amplo, adicionar teste P2 do dispatcher interno; caso contrario, registrar gap no relatorio do slice.
+7. Atualizar docs minimas: `docs/harness/validation-matrix.md`, roadmaps 001/002, `docs/harness/learnings.md` quando houver aprendizado reutilizavel, `feature_list.md` se houver gap, `agent-progress.md` e relatorio `docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md`.
+
+## Validacoes planejadas
+
+- `git status --short`.
+- `dotnet restore PaymentHub.slnx`.
+- `dotnet build PaymentHub.slnx`.
+- `dotnet test PaymentHub.slnx`.
+- `dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj`.
+- `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~EndToEnd"`.
+- `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~AbacatePay"`.
+- `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~Webhook"`.
+- `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~Outbox"`.
+- `scripts/agent-architecture-check.sh`.
+- `scripts/agent-docs-check.sh`.
+- `git diff --check`.
+- Se existir e couber no tempo: `scripts/agent-verify.sh` e `RUN_DOTNET_VALIDATION=1 scripts/agent-verify.sh`.
 
 ### Slice 2-B — AbacatePay webhooks externos e normalizacao de eventos
 

@@ -55,6 +55,14 @@ public class ProcessWebhookEventHandlerAbacatePayTests
     {
         var webhooks = new Mock<IWebhookEventRepository>(MockBehavior.Strict);
         var payments = new Mock<IPaymentRepository>(MockBehavior.Strict);
+        // Slice 3-IT: ProcessWebhookEventHandler.ProcessAsync now explicitly
+        // calls _payments.AddAttemptAsync to ensure EF tracks the new
+        // attempt as Added (collection navigation tracking alone is
+        // unreliable — see audit report). Default to Task.CompletedTask so
+        // individual tests that need to assert the call can override with
+        // .Verify(...) and tests that don't care still pass strict mocks.
+        payments.Setup(p => p.AddAttemptAsync(It.IsAny<PaymentAttempt>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         var providerAccounts = new Mock<IProviderAccountRepository>(MockBehavior.Strict);
         // Real fake protector: lets tests build ProviderAccount blobs that
         // survive the handler's unprotect call without dragging in

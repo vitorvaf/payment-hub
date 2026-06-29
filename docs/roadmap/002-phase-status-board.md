@@ -118,7 +118,7 @@ Criar primeira fixture de integracao com Testcontainers ou Docker Compose.
 
 ```
 Slice 1-IT  Fixture Postgres + migrations + indices criticos + repositorios principais   [CONCLUIDO 2026-06-26]
-Slice 3-IT  Testes de middleware, checkout autenticado e idempotencia
+Slice 3-IT  Testes E2E da API + Postgres + adapter AbacatePay + fakes de transporte  [CONCLUIDO 2026-06-29 — 4 testes P1 cobrindo checkout + webhook valido + idempotencia + fail-fast 401; 2 producao bugs encontrados e corrigidos (jsonb->text em webhook_events.raw_payload; _payments.AddAttemptAsync explicito no ProcessWebhookEventHandler); detalhes em docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md]
 Slice 7-IT  Testes de workers (inbox/outbox) com banco real
 ```
 
@@ -146,8 +146,8 @@ Slice 5-C  UI minima de gestao de tenants/applications/provider accounts
 
 | Indicador | Valor atual | Meta |
 |-----------|------------|------|
-| Testes unitarios passando | 408 | >= 64 |
-| Testes de integracao (Postgres real) | 10 | >= 5 |
+| Testes unitarios passando | 418 | >= 64 |
+| Testes de integracao (Postgres real) | 14 (10 Slice 1-IT + 4 Slice 3-IT) | >= 5 |
 | Gaps P0 abertos | 0 | 0 |
 | Gaps P1 abertos | **0** | 0 |
 | Gaps P2 abertos | 7 | <= 2 |

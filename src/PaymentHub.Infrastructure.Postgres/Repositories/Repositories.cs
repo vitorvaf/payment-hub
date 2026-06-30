@@ -66,6 +66,25 @@ public class ProviderAccountRepository : IProviderAccountRepository
     public Task<ProviderAccount?> GetByCodeAsync(Guid tenantId, Guid applicationId, ProviderCode code, CancellationToken cancellationToken)
         => _db.ProviderAccounts.FirstOrDefaultAsync(p =>
             p.TenantId == tenantId && p.ApplicationId == applicationId && p.ProviderCode == code && p.Active, cancellationToken);
+
+    public Task<ProviderAccount?> GetByIdForTenantAndApplicationAsync(
+        Guid tenantId,
+        Guid applicationId,
+        Guid providerAccountId,
+        CancellationToken cancellationToken)
+        => _db.ProviderAccounts.FirstOrDefaultAsync(p =>
+            p.Id == providerAccountId
+            && p.TenantId == tenantId
+            && p.ApplicationId == applicationId,
+            cancellationToken);
+
+    public Task UpdateAsync(ProviderAccount account, CancellationToken cancellationToken)
+    {
+        // EF Core change tracker detects mutations on tracked entities;
+        // AddAsync followed by mutations correctly issues UPDATE.
+        _db.ProviderAccounts.Update(account);
+        return Task.CompletedTask;
+    }
 }
 
 public class ApiKeyRepository : IApiKeyRepository

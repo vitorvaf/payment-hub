@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using PaymentHub.Infrastructure.Postgres;
@@ -11,9 +12,11 @@ using PaymentHub.Infrastructure.Postgres;
 namespace PaymentHub.Infrastructure.Postgres.Migrations
 {
     [DbContext(typeof(PaymentHubDbContext))]
-    partial class PaymentHubDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260630001726_AddProviderAccountWebhookColumns")]
+    partial class AddProviderAccountWebhookColumns
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

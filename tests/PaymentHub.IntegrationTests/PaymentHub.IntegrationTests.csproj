@@ -13,9 +13,12 @@
     <PackageReference Include="FluentAssertions" Version="7.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
+    <!-- 10.0.9 to match Microsoft.Extensions.Hosting 10.0.9 (transitive via the
+         PaymentHub.Worker SDK worker reference used by Slice 7-IT to drive the
+         dispatcher manually). -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.9" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="Npgsql" Version="10.0.0" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.12.0" />
@@ -33,6 +36,9 @@
     <ProjectReference Include="..\..\src\PaymentHub.Infrastructure.Postgres\PaymentHub.Infrastructure.Postgres.csproj" />
     <ProjectReference Include="..\..\src\PaymentHub.Infrastructure.Providers\PaymentHub.Infrastructure.Providers.csproj" />
     <ProjectReference Include="..\..\src\PaymentHub.Api\PaymentHub.Api.csproj" />
+    <!-- Slice 7-IT: the integration test invokes OutboxDispatcherWorker.DispatchOnceAsync
+         manually (the hosted BackgroundService is not hosted inside WebApplicationFactory). -->
+    <ProjectReference Include="..\..\src\PaymentHub.Worker\PaymentHub.Worker.csproj" />
   </ItemGroup>
 
 </Project>

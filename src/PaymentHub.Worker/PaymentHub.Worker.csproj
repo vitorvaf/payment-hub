@@ -9,6 +9,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="PaymentHub.UnitTests" />
+    <!-- Slice 7-IT: integration tests drive one iteration of the dispatcher manually so the
+         worker hosted service can stay out of the WebApplicationFactory test pipeline. -->
+    <InternalsVisibleTo Include="PaymentHub.IntegrationTests" />
   </ItemGroup>
 
   <ItemGroup>

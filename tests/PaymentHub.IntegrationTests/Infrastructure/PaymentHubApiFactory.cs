@@ -92,6 +92,21 @@ public sealed class PaymentHubApiFactory : WebApplicationFactory<Program>
     }
 
     /// <summary>
+    /// Returns the protected webhook secret blob the
+    /// <see cref="PaymentHub.Application.Abstractions.Security.IWebhookSecretProtector"/>
+    /// would persist alongside the <c>ApplicationClient</c>. The API host's
+    /// protector is configured with the deterministic 32-byte key the factory
+    /// ships in <see cref="WebhookSecretEncryptionKey"/>.
+    /// </summary>
+    public string ProtectWebhookSecret(string plainSecret)
+    {
+        using var scope = Services.CreateScope();
+        var protector = scope.ServiceProvider
+            .GetRequiredService<PaymentHub.Application.Abstractions.Security.IWebhookSecretProtector>();
+        return protector.Protect(plainSecret);
+    }
+
+    /// <summary>
     /// Computes the HMAC-SHA256 hash that the API key middleware expects
     /// to see in the database for the given plain API key.
     /// </summary>

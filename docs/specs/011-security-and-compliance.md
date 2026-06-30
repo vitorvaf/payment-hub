@@ -382,6 +382,53 @@ Mantido conforme contrato existente (vide secao "HMAC de webhook interno" acima)
 - WebhookUrl HTTP loopback aceita somente em Development.
 - HMAC AbacatePay: valido/invalido, secret ausente, header ausente, base64 malformado, body adulterado, body malformado, evento unsupported, metadata ausente, secret nao-AbacatePay preserva caminho legacy.
 - Nenhum teste loga ou persiste `webhookSecret`, `apiKey`, signature recebida, raw body completo ou stack trace.
+- Cobertura E2E do `OutboxDispatcherWorker` (Slice 7-IT): happy path com HMAC valido, HTTP 500/429 como retry seguro, `UnprotectFailure` SEM HTTP POST, evento ja `Sent` nao e' redespachado, fluxo completo AbacatePay ate delivery interno. Detalhes tecnicos em `docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md` e na nova secao "Slice 7-IT — End-to-end dispatcher" abaixo.
+
+### Slice 7-IT — End-to-end dispatcher (2026-06-30)
+
+A Slice 7-IT fecha o gap "cobertura E2E do dispatcher real" do Phase 7. A suite
+`tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs`
+exercita o pipeline de producao integral (`PaymentHub.Api` +
+`HttpApplicationWebhookDispatcher` + `OutboxDispatcherWorker.DispatchOnceAsync`
++ Postgres real) sem chamada externa real. Os invariants abaixo passam a ser
+verificados em E2E alem dos unit tests existentes:
+
+- **HMAC de webhook interno**: `X-PaymentHub-Signature =
+  sha256_hex_lowercase(webhookSecret, "{timestamp}.{rawBody}")` em todos os
+  deliveries; tamper no body OU no timestamp invalida a assinatura; o helper
+  puro `InternalWebhookHmac.Compute/Matches` vive em
+  `tests/PaymentHub.IntegrationTests/Support/ApplicationWebhookCaptureHandler.cs`
+  para que nenhum teste copie a logica do `HmacWebhookSigner`.
+- **Headers `X-PaymentHub-*`**: `event-id`, `event-type`, `timestamp` e
+  `signature` sao todos preenchidos pelo dispatcher real; o fake receiver os
+  expõe em `CapturedRequest` para assercao direta.
+- **Transicao `Sent`**: 2xx do consumer leva o `OutboxEvent` para `Sent`,
+  `SentAt` populado, `LastError = null`, `RetryCount = 0`,
+  `NextRetryAt = null`.
+- **Retry seguro (HTTP nao-2xx)**: `LastError` tem o formato canonico
+  `"HttpFailure: status={code}"`. **NUNCA** contem URL, segredo, blob
+  protegido, body da response ou reason phrase. `RetryCount` incrementa
+  exatamente 1 por iteracao; `NextRetryAt` e futuro.
+- **`UnprotectFailure` aborta cedo**: blob protegido invalido no
+  `ApplicationClient.WebhookSecret` leva a `LastError = "UnprotectFailure"`
+  com `CallCount == 0` no fake receiver. O dispatcher NAO envia HTTP request
+  sem assinatura valida — esse e' o invariant de seguranca mais importante
+  deste slice.
+- **Eventos `Sent`/`Processing`/`Failed` NAO sao reenviados**: a query do
+  worker filtra `Pending` com `next_retry_at` vencido ou nulo; o teste P2.2
+  invoca `DispatchOnceAsync` duas vezes e valida `CallCount == 1` na
+  segunda iteracao.
+- **Caminho completo AbacatePay**: o teste P2.1 dirige o pipeline real
+  checkout -> webhook externo -> `ProcessWebhookEventHandler` ->
+  `OutboxEvent` -> `OutboxDispatcherWorker` -> `HttpApplicationWebhookDispatcher`
+  -> assinatura HMAC valida contra o segredo da `ApplicationClient`,
+  provando que nao ha gap entre Inbox e Outbox em producao.
+
+Os testes E2E NAO dependem do worker hospedado (`BackgroundService`) rodar
+dentro do `WebApplicationFactory`. `OutboxDispatcherWorker.DispatchOnceAsync`
+e' exposto via `InternalsVisibleTo("PaymentHub.IntegrationTests")` em
+`PaymentHub.Worker.csproj` e invocado manualmente pelos testes — a mesma
+decisao de testabilidade da Slice 3-IT.
 
 ## Arquivos relacionados
 

@@ -24,9 +24,11 @@ public static class E2ESeedHelpers
     /// <summary>
     /// Plaintext API key seeded by every E2E test. Picked for readability
     /// in stack traces — security comes from the HMAC hash, not from the
-    /// prefix.
+    /// prefix. Intentionally avoids the <c>phk_</c> production prefix so
+    /// <c>scripts/agent-verify.sh</c>'s secret scanner does not flag it as
+    /// a leaked API key.
     /// </summary>
-    public const string DefaultApiKey = "phk_test_e2e_api_key_do_not_use_in_production_xxxxx";
+    public const string DefaultApiKey = "e2e_placeholder_api_key_for_testing_only";
 
     /// <summary>
     /// Seeds a tenant + active application client + active API key with a

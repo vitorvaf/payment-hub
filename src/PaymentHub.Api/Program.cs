@@ -71,6 +71,8 @@ builder.Services.AddScoped<IDevelopmentDataSeeder, DevelopmentDataSeeder>();
 builder.Services.AddScoped<IRegisterTenantHandler, RegisterTenantHandler>();
 builder.Services.AddScoped<IRegisterApplicationClientHandler, RegisterApplicationClientHandler>();
 builder.Services.AddScoped<IRegisterProviderAccountHandler, RegisterProviderAccountHandler>();
+builder.Services.AddScoped<IConfigureProviderAccountWebhookHandler, ConfigureProviderAccountWebhookHandler>();
+builder.Services.AddScoped<IGetProviderAccountWebhookHandler, GetProviderAccountWebhookHandler>();
 builder.Services.AddScoped<ICreateCheckoutHandler, CreateCheckoutHandler>();
 builder.Services.AddScoped<IGetPaymentByIdHandler, GetPaymentByIdHandler>();
 builder.Services.AddScoped<IListPaymentsHandler, ListPaymentsHandler>();

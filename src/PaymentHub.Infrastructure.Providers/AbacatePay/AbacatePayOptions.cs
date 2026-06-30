@@ -30,4 +30,20 @@ public sealed class AbacatePayOptions
     /// <c>appsettings.json</c> ships with this disabled and only Development overrides it.
     /// </summary>
     public bool AllowDevModeSimulation { get; init; }
+
+    /// <summary>
+    /// Slice 2-C. Opt-in flag that allows the
+    /// <c>ConfigureProviderAccountWebhookHandler</c> to call
+    /// <c>POST /webhooks/create</c> at the upstream when the caller sets
+    /// <c>registerRemotely=true</c>. MUST stay <c>false</c> in production —
+    /// <c>appsettings.json</c> ships with this disabled and only
+    /// Development overrides it (if at all).
+    ///
+    /// When this flag is <c>false</c> AND the caller asks for remote
+    /// registration, the handler records
+    /// <c>RemoteRegistrationDeferred</c> on
+    /// <c>ProviderAccount.WebhookRemoteStatus</c> instead of calling
+    /// the upstream.
+    /// </summary>
+    public bool AllowWebhookRegistration { get; init; }
 }

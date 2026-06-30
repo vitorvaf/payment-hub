@@ -71,6 +71,32 @@ Slice 2-B conecta o adapter AbacatePay ao caminho oficial de webhooks externos: 
 - **DI**: `IAbacatePayWebhookSignatureVerifier` e `IAbacatePayWebhookNormalizer` registrados como Singleton em `ProvidersServiceCollectionExtensions`.
 - **Cobertura de testes**: 18 testes em `AbacatePayProviderAdapterWebhookTests`, 14 em `AbacatePayWebhookNormalizerTests`, 10 em `AbacatePayWebhookSignatureVerifierTests`. Total acumulado slice 2-B: 42 testes novos.
 
+### AbacatePay — Gerenciamento de webhook via API (Slice 2-C — 2026-06-30)
+
+Slice 2-C introduz dois endpoints server-to-server para configurar (PUT) e consultar (GET) a inscricao de webhook AbacatePay em `ProviderAccount`. O segredo continua a viver **dentro** de `EncryptedCredentials` (nunca em coluna propria), e a chamada de registro remoto fica gated por feature flag ate o Slice 2-C.1 (sub-seguinte) implementar o client HTTP real.
+
+- **Endpoints** (vide `009-api-contracts.md` para payloads completos):
+  - `PUT /api/v1/provider-accounts/{providerAccountId}/webhook`
+  - `GET /api/v1/provider-accounts/{providerAccountId}/webhook`
+- **Quatro colunas non-sensitive** adicionadas em `provider_accounts` via migration `20260630001726_AddProviderAccountWebhookColumns`:
+  - `webhook_callback_url` (varchar 2000, nullable) — alvo das entregas.
+  - `webhook_events` (**text**, nullable) — array JSON serializado (`["transparent.completed", ...]`). Anti-regression: `text` deliberadamente (NAO `jsonb`), porque `jsonb` reformata o JSON no insert (espaco apos `:` e `,`); isso quebraria qualquer round-trip byte-exact ou HMAC no body armazenado. Mesma regra que `webhook_events.raw_payload` (Slice 3-IT).
+  - `webhook_configured_at` (timestamp, nullable) — timestamp da ultima gravacao (incluindo clears).
+  - `webhook_remote_status` (varchar 32, nullable) — `NotRegistered` | `Registered` | `RegistrationFailed` | `RemoteRegistrationDeferred`.
+- **DTOs** em `PaymentHub.Application/Tenants/Dtos.cs`:
+  - `ConfigureAbacatePayWebhookRequestDto(CallbackUrl, Events, WebhookSecret, RegisterRemotely)` — body do PUT, **sem `tenantId`/`applicationId`** (re-asserted invariant Slice 6-B).
+  - `ProviderAccountWebhookResponseDto(ProviderAccountId, ProviderCode, Environment, CallbackUrl, Events, HasWebhookSecret, RemoteRegistrationStatus, ConfiguredAt, UpdatedAt)` — body de PUT/GET, **sem `apiKey`, `webhookSecret`, `protectedWebhookSecret`, `encryptedCredentials`**.
+- **Validator** `ConfigureAbacatePayWebhookRequestValidator` injeta `IRuntimeEnvironment` e reusa `WebhookUrlValidator` (HTTPS-only, loopback HTTP em Development). Whitelist de eventos e literal na aplicacao para que Application nunca dependa de Infrastructure.
+- **Domain** `ProviderAccount.ConfigureWebhook(callbackUrl, eventsJson, remoteStatus)` valida `eventsJson` e apenas aceita array JSON. `Activate()` adicionado para paridade com `Tenant` (ainda sem caller externo nesta slice).
+- **Repository** `IProviderAccountRepository.GetByIdForTenantAndApplicationAsync(tenantId, applicationId, providerAccountId, ct)` **sem** filtro `Active`, para permitir distinguir `404 Not Found` (linha inexistente no escopo) de `409 Conflict` (linha presente mas inativa).
+- **Handlers** (`PaymentHub.Application/Tenants/`):
+  - `IConfigureProviderAccountWebhookHandler` retorna `ConfigureWebhookOutcome { Success | NotFound | Inactive | UnsupportedProvider }`. Logica: preservar `apiKey` ao round-trip `EncryptedCredentials`; sobrescrever `webhookSecret` apenas quando o caller fornece um novo; chamar `IAbacatePayWebhookManagementClient.RegisterWebhookAsync(...)` apenas quando o caller seta `registerRemotely=true`, forneceu `webhookSecret`, **e** a feature policy permite.
+  - `IGetProviderAccountWebhookHandler` retorna `GetWebhookOutcome` (mesmos 4 casos). `HasWebhookSecret` e derivado via `ProviderAccountCredentialsInspector.HasWebhookSecret(...)` que **unprotecta** o blob e verifica os campos `webhookSecret` (preferido) / `secret` (legacy) sem nunca vazar o valor.
+- **Abstraction** `IProviderWebhookManagementClient` + `IProviderWebhookRegistrationFeaturePolicy` vivem em `Application/Abstractions/Providers/` (Clean Architecture). Implementacoes `NoOpProviderWebhookManagementClient` e `AbacatePayWebhookRegistrationFeaturePolicy` ficam em `Infrastructure.Providers.AbacatePay/`. Default da feature flag: `false` (opt-in explicito).
+- **Feature flag** `Providers:AbacatePay:AllowWebhookRegistration` (bool, default `false`). Quando `false`, mesmo com `registerRemotely=true`, o handler NAO chama o client e grava `RemoteRegistrationDeferred`.
+- **Controller** `ProviderAccountsController` ganha 2 novos endpoints sob `[Route("api/v1/provider-accounts")]`. Reusa o padrao `ITenantContext` da Slice 6-B (try/catch em `InvalidOperationException` retornando 401). Status mapping: 200 / 401 / 404 / 409. Body em 401/404/409 sempre com `{ "error": "...", "message": "..." }` generico, sem `tenantId`/`applicationId`/`providerAccountId` que pudessem vazar existencia.
+- **Cobertura de testes**: 14 em `ConfigureProviderAccountWebhookHandlerTests`, 9 em `GetProviderAccountWebhookHandlerTests`, 11 em `ConfigureAbacatePayWebhookRequestValidatorTests`, 12 em `ProviderAccountsWebhookControllerTests`, 3 em `ProviderAccountWebhookPersistenceTests`. Total adicionado pelo Slice 2-C: 49 testes.
+
 ## Criterios de aceite
 
 - Provider code e estavel.

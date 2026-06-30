@@ -45,6 +45,14 @@ public static class ProvidersServiceCollectionExtensions
         services.AddSingleton<IAbacatePayWebhookSignatureVerifier, HmacAbacatePayWebhookSignatureVerifier>();
         services.AddSingleton<IAbacatePayWebhookNormalizer, AbacatePayWebhookNormalizer>();
 
+        // Slice 2-C: webhook management client (registration of webhook
+        // subscriptions at the upstream). The default no-op keeps the
+        // API functional out-of-the-box; a real HTTP client will replace
+        // it in a follow-up slice guarded by
+        // `Providers:AbacatePay:AllowWebhookRegistration`.
+        services.AddSingleton<IProviderWebhookManagementClient, NoOpProviderWebhookManagementClient>();
+        services.AddSingleton<IProviderWebhookRegistrationFeaturePolicy, AbacatePayWebhookRegistrationFeaturePolicy>();
+
         // Other providers remain skeleton for now.
         services.AddSingleton<IPaymentProviderAdapter, FakePaymentProviderAdapter>();
         services.AddSingleton<IPaymentProviderAdapter, StripeProviderAdapter>();

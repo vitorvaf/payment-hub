@@ -105,6 +105,14 @@ Cenarios de cobertura:
 - Pagamento inexistente e fora de ordem.
 - AbacatePay: HMAC valido/invalido/ausente, payload malformado, evento unsupported, metadata ausente, secret ausente.
 - Nenhum teste loga ou persiste `webhookSecret`, `apiKey`, signature ou body bruto.
+- Endpoints de configuracao (Slice 2-C, 2026-06-30):
+  - PUT sucesso preserva `apiKey` no JSON protegido e atualiza `webhookSecret` quando fornecido.
+  - PUT sem `webhookSecret` no body preserva o valor atual (ou o `secret` legacy).
+  - PUT retorna 404 quando o `providerAccountId` nao existe no escopo (tenant+application) e 409 quando a conta existe mas esta inativa ou nao e AbacatePay.
+  - PUT chama `IProviderWebhookManagementClient.RegisterWebhookAsync` apenas quando caller seta `registerRemotely=true`, forneceu `webhookSecret`, e a feature policy (`Providers:AbacatePay:AllowWebhookRegistration`) esta ligada; caso contrario grava `RemoteRegistrationDeferred` (ou `NotRegistered`) sem chamar o client.
+  - GET nega qualquer chave/secret/credentials no response (reflexao no DTO).
+  - Validator: `callbackUrl` fora do padrao HTTPS/SSRF rejeitado, eventos fora da whitelist `transparent.*` rejeitados, `webhookSecret` fora da faixa 16-500 chars rejeitado.
+  - Migration: `provider_accounts.webhook_events` permanece como `text` (NAO `jsonb`) para garantir round-trip byte-exact. Anti-regression documentada na migration `20260630001726_AddProviderAccountWebhookColumns` e no entry de learnings de 2026-06-30.
 
 ## Arquivos relacionados
 

@@ -19,6 +19,9 @@ public class ProviderAccountsControllerTests
     private readonly Mock<IRegisterProviderAccountHandler> _handler = new(MockBehavior.Strict);
     private readonly Mock<IValidator<RegisterProviderAccountRequestDto>> _validator = new();
     private readonly Mock<ITenantContext> _tenantContext = new();
+    private readonly Mock<IValidator<ConfigureAbacatePayWebhookRequestDto>> _webhookValidator = new();
+    private readonly Mock<IConfigureProviderAccountWebhookHandler> _configureWebhookHandler = new(MockBehavior.Strict);
+    private readonly Mock<IGetProviderAccountWebhookHandler> _getWebhookHandler = new(MockBehavior.Strict);
 
     private static readonly RegisterProviderAccountRequestDto ValidBody = new(
         ProviderCode.Fake,
@@ -40,7 +43,7 @@ public class ProviderAccountsControllerTests
         _handler.Setup(h => h.HandleAsync(tenantId, applicationId, It.IsAny<RegisterProviderAccountRequestDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewResponse(tenantId, applicationId));
 
-        var controller = new ProviderAccountsController(_handler.Object, _validator.Object, _tenantContext.Object)
+        var controller = new ProviderAccountsController(_handler.Object, _validator.Object, _tenantContext.Object, _webhookValidator.Object, _configureWebhookHandler.Object, _getWebhookHandler.Object)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
@@ -66,7 +69,7 @@ public class ProviderAccountsControllerTests
         _handler.Setup(h => h.HandleAsync(tenantId, applicationId, It.IsAny<RegisterProviderAccountRequestDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewResponse(tenantId, applicationId));
 
-        var controller = new ProviderAccountsController(_handler.Object, _validator.Object, _tenantContext.Object)
+        var controller = new ProviderAccountsController(_handler.Object, _validator.Object, _tenantContext.Object, _webhookValidator.Object, _configureWebhookHandler.Object, _getWebhookHandler.Object)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
@@ -105,7 +108,7 @@ public class ProviderAccountsControllerTests
             .ReturnsAsync(new ValidationResult());
         _tenantContext.SetupGet(c => c.TenantId).Throws(new InvalidOperationException("Tenant id not resolved."));
 
-        var controller = new ProviderAccountsController(_handler.Object, _validator.Object, _tenantContext.Object)
+        var controller = new ProviderAccountsController(_handler.Object, _validator.Object, _tenantContext.Object, _webhookValidator.Object, _configureWebhookHandler.Object, _getWebhookHandler.Object)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
@@ -128,7 +131,7 @@ public class ProviderAccountsControllerTests
         _tenantContext.SetupGet(c => c.TenantId).Returns(tenantId);
         _tenantContext.SetupGet(c => c.ApplicationId).Throws(new InvalidOperationException("Application id not resolved."));
 
-        var controller = new ProviderAccountsController(_handler.Object, _validator.Object, _tenantContext.Object)
+        var controller = new ProviderAccountsController(_handler.Object, _validator.Object, _tenantContext.Object, _webhookValidator.Object, _configureWebhookHandler.Object, _getWebhookHandler.Object)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
@@ -148,7 +151,7 @@ public class ProviderAccountsControllerTests
         _validator.Setup(v => v.ValidateAsync(It.IsAny<RegisterProviderAccountRequestDto>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ValidationResult(failures));
 
-        var controller = new ProviderAccountsController(_handler.Object, _validator.Object, _tenantContext.Object)
+        var controller = new ProviderAccountsController(_handler.Object, _validator.Object, _tenantContext.Object, _webhookValidator.Object, _configureWebhookHandler.Object, _getWebhookHandler.Object)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };

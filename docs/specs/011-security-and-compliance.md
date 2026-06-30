@@ -391,3 +391,28 @@ Mantido conforme contrato existente (vide secao "HMAC de webhook interno" acima)
 - `src/PaymentHub.Worker/OutboxDispatcherWorker.cs`
 - `src/PaymentHub.Infrastructure.Providers/AbacatePay/Webhooks/*`
 - `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md`
+- `docs/audits/slice-2c-abacatepay-webhook-management-report-2026-06-30.md`
+
+### Gerenciamento de webhook AbacatePay via API (Slice 2-C — 2026-06-30)
+
+Os endpoints `PUT`/`GET /api/v1/provider-accounts/{providerAccountId}/webhook` introduzem configuracao explicita de webhook por `ProviderAccount`. As decisoes abaixo sao imperativas:
+
+- `webhookSecret` **nunca** ganha coluna propria. O segredo continua a trafegar apenas dentro de `ProviderAccount.EncryptedCredentials` (JSON protegido por `ICredentialProtector`). A regra em "Provider credentials" continua valida.
+- Toda escrita de `callbackUrl` passa por `WebhookUrlValidator` (re-uso da Slice 7-A.5). Mesma politica HTTPS-only + SSRF (RFC1918, link-local, IMDS, loopback) + excecao `http://localhost` em Development.
+- Eventos aceitos sao **whitelist** literal na camada de validacao: `transparent.completed`, `transparent.refunded`, `transparent.disputed`, `transparent.lost`. Qualquer outro valor e rejeitado em `400`.
+- Tenant e application continuam derivados **exclusivamente** de `ITenantContext` (re-asserting Slice 6-B). O DTO de request NAO expoe `tenantId`/`applicationId`.
+- Controller retorna matriz controlada de status codes: `200`, `400` (validation), `401` (contexto ausente), `404` (id nao existe no escopo), `409` (conta inativa OU nao-AbacatePay), `500` apenas em catch-all. Os payloads de erro NAO carregam `tenantId`/`applicationId`/`providerAccountId`.
+- Response `ProviderAccountWebhookResponseDto` nao expoe `apiKey`, `webhookSecret`, `protectedWebhookSecret` ou `encryptedCredentials` (validado por reflexao em testes). A unica mencao ao segredo e o boolean `hasWebhookSecret`.
+- Memoria: o handler chama `ICredentialProtector.Unprotect` para fazer round-trip das credenciais (`apiKey` + `webhookSecret`). O blob raw nao e mantido em campo de classe; somente em variavel local durante o `HandleAsync`. O GC recolhe ao fim do scope do request.
+- Logs estruturados podem mencionar `providerAccountId`/`tenantId`/`applicationId` e a categoria do `WebhookRemoteStatus` (`RemoteRegistrationDeferred` etc.), mas **nunca** `apiKey`, `webhookSecret` (raw ou Base64), `EncryptedCredentials` ou a URL completa de `callbackUrl` quando ela carrega segredo em query string.
+- `webhook_events` column no banco e **`text`** (NAO `jsonb`). Mesma anti-regression que `webhook_events.raw_payload` (Slice 3-IT, 2026-06-29): `jsonb` reformata o JSON no insert (espaco apos `:` e `,`), o que quebra qualquer consumidor que depender do shape byte-exact. Documentado inline em `EntityConfigurations.cs` e na migration `20260630001726_AddProviderAccountWebhookColumns`.
+- Configuracao da chamada remota: `Providers:AbacatePay:AllowWebhookRegistration` (default `false`). Combinado com `registerRemotely=true` + `webhookSecret` nao-nulo + a policy retornar `true`, o handler chama `IProviderWebhookManagementClient.RegisterWebhookAsync(...)`. O client default (`NoOpProviderWebhookManagementClient`) nao faz HTTP — apenas loga metadata. A implementacao HTTP real (chamada a `POST /webhooks/create`) sera adicionada em slice proprio (sub-seguinte de Slice 2-C), mantendo o no-op como padrao.
+- Erros do `IProviderWebhookManagementClient` NAO propagam o segredo. O handler mapeia exito para `Registered`, falha para `RegistrationFailed` ou `NotRegistered`. Mensagens de erro da implementacao concreta continuam sob a politica "mensagem segura" herdada do Slice 2-A.
+
+### Anti-regression "jsonb normaliza whitespace" (Slice 2-C, 2026-06-30)
+
+Adicionada ao Stack de Conhecimento (Slice 3-IT ja tinha documentado para `webhook_events.raw_payload`):
+
+- `provider_accounts.webhook_events` tem que permanecer como `text`.
+- Qualquer nova coluna que armazene JSON e que possa ser rodada byte-exact round-trip (ex.: `webhookSecret` em `encrypted_credentials` embora esse ja seja `text` por outro motivo) NAO pode ser `jsonb`.
+- Reverter essa coluna para `jsonb` em nova migration quebra `ProviderAccountWebhookPersistenceTests.ProviderAccount_ShouldPersistAllWebhookConfigurationColumns` com `"Expected [...].WebhookEvents to be '[...]' with a length of 48, but '[...]' has a length of 49, differs near " t""`.

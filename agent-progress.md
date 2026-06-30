@@ -30,7 +30,176 @@ Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e v
 - Commit: `feat(provider): process AbacatePay external webhooks (Slice 2-B)`.
 - Push: `origin dev`.
 
+### 2026-06-30 - Slice 2-C fechado (conclusao + audit report)
+
+- Data: 2026-06-30
+- Agente/superficie: OpenCode (Implementer)
+- Sub-slices entregues: 2-C.1 (Domain: 4 non-sensitive fields + ConfigureWebhook + Activate), 2-C.2 (Repository: GetByIdForTenantAndApplicationAsync sem filtro Active + EF mapping + Migration `20260630001726_AddProviderAccountWebhookColumns`), 2-C.3 (DTOs + ConfigureAbacatePayWebhookRequestValidator reusando WebhookUrlValidator + whitelist `transparent.*`), 2-C.4 (ConfigureProviderAccountWebhookHandler + GetProviderAccountWebhookHandler + ProviderAccountCredentialsInspector internal static helper), 2-C.5 (IProviderWebhookManagementClient + IProviderWebhookRegistrationFeaturePolicy em Application/Abstractions/Providers/ + NoOpProviderWebhookManagementClient + AbacatePayWebhookRegistrationFeaturePolicy em Infrastructure.Providers.AbacatePay/ + AllowWebhookRegistration opt-in flag), 2-C.6 (PUT/GET endpoints em ProviderAccountsController + 12 controller tests), 2-C.7 (3 integration tests via Testcontainers), 2-C.8 (audit report + 5 specs/ADR/validation-matrix/learnings updates).
+- Q1-Q5 + 5 anti-regression notes respondidas em `docs/audits/slice-2c-abacatepay-webhook-management-report-2026-06-30.md`.
+- **Bug descoberto pela slice e corrigido antes de commit:** o plano original marcava `provider_accounts.webhook_events` como `jsonb` ("para queries SQL/GIN-index"). A primeira execucao do teste `ProviderAccount_ShouldPersistAllWebhookConfigurationColumns` quebrou com `differs near t` (espaco apos `:`), reproduzindo exatamente o bug do Slice 3-IT para `webhook_events.raw_payload`. Migration regenerada para usar `text`; comentario anti-regression espelhado em **3 locais** (EntityConfigurations.cs, migration XML doc, specs/011 + learnings). **Regra:** qualquer coluna JSON-shaped que armazene JSON inserido via `JsonSerializer.Serialize(...)` e reconsumido via `JsonDocument.Parse(...)` em memoria deve usar `text`/`json` (NAO `jsonb`).
+- Validacao final: `dotnet build PaymentHub.slnx` (0/0 em 9 projetos); `dotnet test PaymentHub.slnx` (467 unit + 17 integration = **484 passed**, +62 vs baseline 422); `dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj` (17 passed: 14 Slice 1-IT + 3 Slice 2-C); `scripts/agent-architecture-check.sh` (Application NAO depende de Infrastructure); `scripts/agent-docs-check.sh` verdes.
+- Suite previa: 422 testes. Suite nova: **484 testes** (+62 net: 59 unit + 3 integration).
+- Filtros verificados: `~ProviderAccountWebhookPersistenceTests` (3), `~ConfigureProviderAccountWebhookHandlerTests` (14), `~GetProviderAccountWebhookHandlerTests` (9), `~ConfigureAbacatePayWebhookRequestValidatorTests` (11), `~ProviderAccountsWebhookControllerTests` (12).
+- Phase 2 mantem `IMPLEMENTED`. P2-2 (gerenciamento de webhook via API) passa de `PARCIALMENTE RESOLVIDO` para `RESOLVIDO 2026-06-30` para o caminho AbacatePay.
+- **Proxima slice planejada:** Slice 2-C.1 — substituir `NoOpProviderWebhookManagementClient` por client HTTP real (`POST /v2/webhooks/create` na AbacatePay) gated por `Providers:AbacatePay:AllowWebhookRegistration`. Handler ja tem toda a plumbing (3 gates, mapeamento de outcome para `webhook_remote_status`).
+- **Gap residual:** Audit log para `ConfigureWebhook` ainda NAO implementado (Phase 5 — painel admin). Documentado no audit report.
+- **Risco residual:** whitelist de eventos duplicada entre `ConfigureAbacatePayWebhookRequestValidator.AllowedAbacatePayWebhookEvents` (Application) e `AbacatePayWebhookNormalizer.SupportedEvents` (Infrastructure). Sincronia obrigatoria ate o Slice 2-C.1 extrair uma constante compartilhada.
+- Docs atualizadas: `docs/specs/006`, `008`, `009`, `011`; `docs/harness/validation.md` (Phase 2 Slice 2-C block); `docs/harness/learnings.md` (entrada 2026-06-30 com 5 padroes reutilizaveis); `docs/audits/slice-2c-abacatepay-webhook-management-report-2026-06-30.md` (audit report).
+- Commit + push pendentes (nao foram feitos nesta sessao; usuario deve pedir explicitamente).
+
 ## Entrada atual
+
+### Slice 2-C.1 — Cliente HTTP real para `IProviderWebhookManagementClient` (call `POST /v2/webhooks/create` na AbacatePay)
+
+Status: PLANEJADO PARA PROXIMA SESSAO
+
+## Objetivo
+
+Permitir configurar e consultar o webhook AbacatePay associado a um ProviderAccount, preservando secrets com ICredentialProtector e sem chamadas externas reais obrigatorias.
+
+## Discovery
+
+### Estado atual de ProviderAccount
+
+- `ProviderAccount` existe em `src/PaymentHub.Domain/Entities/ProviderAccount.cs` com `EncryptedCredentials`, `Active`, `CreatedAt` e `UpdatedAt`.
+- Hoje nao ha campos de configuracao nao sensivel de webhook no `ProviderAccount` (`callbackUrl`, eventos, status remoto, configuredAt).
+- `UpdateCredentials(string encryptedCredentials)` ja atualiza `EncryptedCredentials` e `UpdatedAt`.
+- `Disable()` existe, mas nao ha metodo `Activate()` no `ProviderAccount`.
+- `ProviderAccountConfiguration` mapeia `encrypted_credentials` como `text`, sem tabela extra de provider config.
+
+### Estado atual das credentials AbacatePay
+
+- `RegisterProviderAccountHandler` protege JSON no formato legado `{ "apiKey": request.ApiKey, "secret": request.Secret }` via `ICredentialProtector.Protect`.
+- `AbacatePayProviderAdapter.CreateCheckoutAsync` desprotege `ProtectedCredentials`, extrai apenas `apiKey` e nunca loga/retorna credencial.
+- `ProcessWebhookEventHandler.ExtractWebhookSecret(...)` ja prefere `webhookSecret` explicito e cai para `secret` legado.
+- Regra do Slice 2-C: ao atualizar webhook, preservar `apiKey`, preferir `webhookSecret`, aceitar `secret` legado, e nunca retornar `apiKey`, `secret`, `webhookSecret` ou `EncryptedCredentials`.
+
+### Estado atual dos endpoints de ProviderAccount
+
+- Endpoint atual: `POST /api/v1/provider-accounts` em `ProviderAccountsController`.
+- Controller usa `ITenantContext` para derivar `tenantId`/`applicationId`, validando o padrao do Slice 6-B: endpoints autenticados nao aceitam tenant/application no body.
+- Response atual `ProviderAccountResponseDto` nao expoe credenciais.
+- Nao existem endpoints `PUT`/`GET` para webhook de ProviderAccount.
+
+### Estado atual dos repositorios
+
+- `IProviderAccountRepository` tem `AddAsync`, `GetDefaultAsync` e `GetByCodeAsync`.
+- `GetDefaultAsync` e `GetByCodeAsync` filtram `Active`, o que e correto para checkout/webhook processing.
+- Para gerenciamento por id, sera necessario adicionar metodo scoped por `(tenantId, applicationId, providerAccountId)` que nao filtre `Active`, para distinguir 404 de conta inativa e retornar erro controlado.
+
+### Estado atual dos webhooks AbacatePay
+
+- Slice 2-B implementou HMAC em `X-Webhook-Signature`, normalizer `transparent.completed|refunded|disputed|lost`, fail-fast 401 quando assinatura ausente e roteamento por metadata.
+- Slice 3-IT validou E2E API + Postgres + AbacatePay fake: webhook valido atualiza Payment e cria Outbox.
+- Anti-regression obrigatorio: `webhook_events.raw_payload` deve permanecer `text` e `ProcessWebhookEventHandler` deve manter `_payments.AddAttemptAsync(attempt, ct)`.
+
+### Estado atual da documentacao AbacatePay
+
+- `docs/specs/002-provider-abacatepay.md` foi solicitado no briefing, mas nao existe no repositorio.
+- Documentacao publica consultada: `https://docs.abacatepay.com/llms.txt`, `https://docs.abacatepay.com/pages/webhooks/reference` e `https://docs.abacatepay.com/pages/webhooks/create`.
+- `POST /webhooks/create` existe, usa Bearer Token, requer `name`, `endpoint`, `secret`, `events` e permissao `WEBHOOK:CREATE`.
+- AbacatePay exige endpoint HTTPS publico e bloqueia enderecos locais/IPs privados.
+
+### Estrategia de armazenamento seguro
+
+- Manter `ProviderAccount.EncryptedCredentials` como fonte segura para secrets.
+- Atualizar credentials desprotegidas preservando `apiKey` e gravando `webhookSecret` explicito.
+- Se o JSON legado tiver `secret`, manter compatibilidade; apos PUT, preferir gravar `webhookSecret` e nao depender de `secret` para novos updates.
+- Nao persistir segredo em coluna propria, `WebhookEvent`, log, response, `LastError` ou audit payload.
+- Para dados nao sensiveis, preferir migration minima em `provider_accounts`:
+  - `webhook_callback_url` (`varchar(2000)`, nullable).
+  - `webhook_events` (`jsonb` ou `text`, nullable; eventos nao sao segredo).
+  - `webhook_configured_at` (`timestamp`, nullable).
+  - `webhook_remote_status` (`varchar(32)`, nullable; valores planejados `NotRegistered`, `Registered`, `RegistrationFailed`, `RemoteRegistrationDeferred`).
+
+### Estrategia de API interna/admin
+
+- Adicionar endpoints no controller existente, menor mudanca de arquitetura:
+  - `PUT /api/v1/provider-accounts/{providerAccountId}/webhook`.
+  - `GET /api/v1/provider-accounts/{providerAccountId}/webhook`.
+- Ambos exigem API Key pelo middleware atual e derivam `tenantId`/`applicationId` de `ITenantContext`.
+- Handler Application deve restringir ProviderAccount ao tenant/application autenticados.
+- ProviderAccount inexistente para o escopo autenticado retorna 404.
+- ProviderAccount inativo retorna erro controlado (sugerido 409 Conflict) sem alterar credenciais.
+- Provider diferente de `AbacatePay` retorna erro controlado (sugerido 409 Conflict ou 400 BadRequest).
+- Response deve retornar apenas dados seguros: `providerAccountId`, `providerCode`, `callbackUrl`, `events`, `hasWebhookSecret`, `remoteRegistrationStatus`, `updatedAt`.
+
+### Estrategia de callbackUrl validation
+
+- Reaproveitar `WebhookUrlValidator.IsAllowed(callbackUrl, environment.IsDevelopment, out _)` de `PaymentHub.Application.Tenants.Validation`.
+- Como o helper e `internal` dentro do assembly Application, novo handler Application consegue reutilizar sem expor API publica.
+- Em Production/Test: HTTPS obrigatorio e bloqueio de localhost, RFC1918, link-local/IMDS, IPv6 link-local, unspecified e broadcast.
+- Em Development: manter politica existente que permite HTTP somente para loopback.
+- Mensagem de erro deve ser generica, sem indicar qual regra especifica falhou.
+
+### Estrategia de client externo/fake
+
+- Criar abstracao pequena em Application ou Infrastructure boundary conforme arquitetura:
+  - `IAbacatePayWebhookManagementClient`.
+  - Operacao minima: `RegisterWebhookAsync(...)`.
+- Como `POST /webhooks/create` esta documentado, o client real pode existir, mas chamadas remotas devem ser opt-in por request (`registerRemotely=true`) e config feature flag explicita.
+- Default do endpoint: `registerRemotely=false`, salvando apenas configuracao local.
+- Em testes automatizados, usar fake/noop e nunca chamar AbacatePay real.
+- Se a config de registro remoto nao estiver habilitada, `registerRemotely=true` deve retornar erro controlado/deferred sem vazar secret; alternativa aceitavel: status `RemoteRegistrationDeferred` documentado.
+- Mensagens de erro do client remoto nunca devem conter `apiKey`, `secret`, `webhookSecret`, payload bruto ou response body.
+
+### Plano de implementacao para proxima sessao
+
+1. Criar DTOs em Application para `ConfigureAbacatePayWebhookRequestDto` e `ProviderAccountWebhookResponseDto`.
+2. Criar handlers `IConfigureProviderAccountWebhookHandler` e `IGetProviderAccountWebhookHandler` em Application, mantendo regras de tenant/application via parametros do caller.
+3. Adicionar validacao FluentValidation para `callbackUrl`, `events`, `webhookSecret` opcional e `registerRemotely` default false.
+4. Adicionar metodos no dominio `ProviderAccount.ConfigureWebhook(...)` e, se necessario, helper para atualizar credenciais preservando `apiKey`.
+5. Adicionar campos nao sensiveis ao `ProviderAccount`, EF mapping e migration minima.
+6. Adicionar `IProviderAccountRepository.GetByIdForTenantAndApplicationAsync(...)` sem filtro `Active`.
+7. Registrar handlers no `Program.cs` e adicionar `PUT`/`GET` no `ProviderAccountsController`.
+8. Criar abstracao de management client e implementacao noop/fake segura; avaliar client HTTP real somente com feature flag explicita e sem chamadas em testes.
+9. Atualizar `PaymentHubApiFactory`/helpers de teste se o E2E recomendado for implementado.
+10. Atualizar specs, roadmap, validation matrix, feature list, learnings se houver aprendizado reutilizavel, e criar relatorio `docs/audits/slice-2c-abacatepay-webhook-management-report-2026-06-29.md`.
+
+### Testes previstos
+
+- Unit: configurar webhook preserva `apiKey` existente.
+- Unit: configurar webhook grava `webhookSecret` dentro do blob protegido e response nao contem segredo.
+- Unit: atualizar webhook substitui apenas `webhookSecret` e mantem `apiKey`.
+- Unit: sem `webhookSecret` gera secret seguro, se essa decisao for adotada; se nao, registrar decisao e exigir secret no request.
+- Unit: fallback `secret` legado continua aceito quando `webhookSecret` nao existe.
+- Unit/API: ProviderAccount de outro tenant/application nao pode ser alterado.
+- Unit/API: ProviderAccount inexistente retorna 404.
+- Unit/API: ProviderAccount inativo retorna erro controlado.
+- Unit/API: provider diferente de AbacatePay retorna erro controlado.
+- Unit: callbackUrl invalida/HTTP fora de Development/private/localhost sao rejeitadas.
+- Unit: Development permite loopback se a politica existente permitir.
+- Unit: `registerRemotely=false` nao chama client externo.
+- Unit: `registerRemotely=true` chama fake/noop management client quando habilitado, ou retorna deferred seguro quando feature flag esta off.
+- Integration: PUT persiste callbackUrl/events e credentials protegidas em Postgres.
+- Integration: GET retorna `hasWebhookSecret=true` sem `apiKey`, `secret`, `webhookSecret` ou `EncryptedCredentials`.
+- E2E recomendado se couber: `ConfigureWebhook_ThenReceiveAbacatePayWebhook_UsesPersistedSecret`.
+
+### Validacoes planejadas
+
+- `git status --short`.
+- `dotnet restore PaymentHub.slnx`.
+- `dotnet build PaymentHub.slnx`.
+- `dotnet test PaymentHub.slnx`.
+- `dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj`.
+- `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~AbacatePay"`.
+- `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~ProviderAccount"`.
+- `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~Webhook"`.
+- `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~EndToEnd"`.
+- `scripts/agent-architecture-check.sh`.
+- `scripts/agent-docs-check.sh`.
+- `git diff --check`.
+- Se existir e couber: `scripts/agent-verify.sh` e `RUN_DOTNET_VALIDATION=1 scripts/agent-verify.sh`.
+
+### Riscos e gaps
+
+- Migration em `provider_accounts` e necessaria para callbackUrl/events/status; manter minima e documentada.
+- `IProviderAccountRepository.GetByCodeAsync` filtra `Active`; nao reutilizar para PUT/GET de management quando for necessario distinguir inativo de inexistente.
+- Endpoint e autenticado por API Key S2S; nao implementar painel admin nem mecanismo paralelo de auth neste slice.
+- `registerRemotely=true` nao deve chamar AbacatePay real em testes. Se implementar client real, manter feature flag off por default.
+- Nao alterar fluxo validado do Slice 3-IT exceto para adicionar teste novo.
+- Nao tocar no dispatcher interno Slice 7-A.
+- `docs/specs/002-provider-abacatepay.md` nao existe apesar de solicitado no briefing; registrar no relatorio e atualizar specs existentes (`006`, `008`, `009`, `011`) em vez de inventar fonte duplicada, salvo decisao explicita de criar nova spec.
 
 ### Slice 4-H — Proximo slice apos Slice 3-IT
 

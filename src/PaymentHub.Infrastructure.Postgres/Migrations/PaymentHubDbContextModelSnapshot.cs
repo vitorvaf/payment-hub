@@ -510,6 +510,24 @@ namespace PaymentHub.Infrastructure.Postgres.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
+                    b.Property<string>("WebhookCallbackUrl")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("webhook_callback_url");
+
+                    b.Property<DateTime?>("WebhookConfiguredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("webhook_configured_at");
+
+                    b.Property<string>("WebhookEvents")
+                        .HasColumnType("text")
+                        .HasColumnName("webhook_events");
+
+                    b.Property<string>("WebhookRemoteStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("webhook_remote_status");
+
                     b.HasKey("Id");
 
                     b.HasIndex("TenantId", "ApplicationId", "ProviderCode", "Environment");
@@ -609,7 +627,7 @@ namespace PaymentHub.Infrastructure.Postgres.Migrations
 
                     b.Property<string>("RawPayloadJson")
                         .IsRequired()
-                        .HasColumnType("jsonb")
+                        .HasColumnType("text")
                         .HasColumnName("raw_payload");
 
                     b.Property<DateTime>("ReceivedAt")

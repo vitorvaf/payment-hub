@@ -30,6 +30,30 @@ public interface IProviderAccountRepository
     Task AddAsync(ProviderAccount account, CancellationToken cancellationToken);
     Task<ProviderAccount?> GetDefaultAsync(Guid tenantId, Guid applicationId, ProviderCode code, CancellationToken cancellationToken);
     Task<ProviderAccount?> GetByCodeAsync(Guid tenantId, Guid applicationId, ProviderCode code, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves a specific <c>ProviderAccount</c> by id scoped to the
+    /// caller-provided tenant and application, WITHOUT filtering on
+    /// <c>Active</c>. Used by the webhook management endpoints (Slice 2-C)
+    /// to distinguish <c>404 Not Found</c> (row absent in the caller's
+    /// scope) from <c>409 Conflict</c> (row present but marked inactive).
+    ///
+    /// Returns <c>null</c> when the row does not exist for the given
+    /// tenant/application.
+    /// </summary>
+    Task<ProviderAccount?> GetByIdForTenantAndApplicationAsync(
+        Guid tenantId,
+        Guid applicationId,
+        Guid providerAccountId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Generic update entry point — needs no implementation work because
+    /// EF Core's <c>DbContext.SaveChangesAsync</c> drives the change
+    /// tracker. Provided here so application handlers can rely on a
+    /// typed API instead of touching the <c>DbContext</c> directly.
+    /// </summary>
+    Task UpdateAsync(ProviderAccount account, CancellationToken cancellationToken);
 }
 
 public interface IApiKeyRepository

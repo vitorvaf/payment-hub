@@ -128,6 +128,63 @@ X-Application-Id: <application_id>
 - Eventos internos enviados por Outbox devem usar `eventId` como id estavel de idempotencia do consumidor e `eventType` como tipo do evento.
 - Specs relacionadas: `006-provider-webhooks.md`, `007-inbox-outbox-workers.md`, `008-provider-adapters.md`.
 
+### `PUT /api/v1/provider-accounts/{providerAccountId}/webhook` (Slice 2-C — 2026-06-30)
+
+- Status: atual (AbacatePay apenas).
+- Objetivo: configurar (substituir) a inscricao de webhook AbacatePay para um `ProviderAccount` existente. Persiste `callbackUrl`, lista de eventos e dispara (opcionalmente) chamada de registro remoto.
+- Autenticacao: API Key.
+- Tenant e application: derivados exclusivamente de `ITenantContext`. O path carrega `providerAccountId`; o body **nao** aceita `tenantId`/`applicationId` (campos removidos do DTO).
+- Request (body JSON):
+
+  ```json
+  {
+    "callbackUrl": "https://merchant.example.com/webhooks/abacate",
+    "events": ["transparent.completed", "transparent.refunded"],
+    "webhookSecret": "abcd...16-500chars",
+    "registerRemotely": false
+  }
+  ```
+
+  Todos os campos sao opcionais. `events` aceita apenas `transparent.completed|refunded|disputed|lost` (whitelist). `webhookSecret` segue 16-500 chars; nunca e persistido em coluna propria, e entra apenas no JSON protegido de `ProviderAccount.EncryptedCredentials`.
+- Response: o mesmo DTO de `GET` (vide abaixo).
+- Erros:
+  - `400` para payload invalido (URL nao-HTTPS, evento fora da whitelist, segredo fora da faixa).
+  - `401` quando `ITenantContext` falha (sem tenant/application autenticado).
+  - `404` quando `providerAccountId` nao existe no escopo (tenant + application).
+  - `409` quando a conta existe mas esta inativa, OU quando a conta nao e AbacatePay (Slice 2-C cobre apenas AbacatePay).
+  - `200` em sucesso.
+- Tabelas afetadas: `provider_accounts` (4 colunas non-sensitive + `encrypted_credentials` quando o segredo e atualizado).
+- Eventos gerados: nenhum.
+- Configuracao remota: gated por `Providers:AbacatePay:AllowWebhookRegistration` + `registerRemotely=true` + `webhookSecret` nao-nulo. Quando algum gate falha, `webhook_remote_status` e gravado como `RemoteRegistrationDeferred` ou `NotRegistered`.
+- Specs relacionadas: `006-provider-webhooks.md`, `008-provider-adapters.md`, `011-security-and-compliance.md` (categoria "gerenciamento de webhook via API").
+
+### `GET /api/v1/provider-accounts/{providerAccountId}/webhook` (Slice 2-C — 2026-06-30)
+
+- Status: atual (AbacatePay apenas).
+- Objetivo: retornar a configuracao de webhook AbacatePay para auditoria ou consulta operacional.
+- Autenticacao: API Key.
+- Tenant e application: `ITenantContext`.
+- Response:
+
+  ```json
+  {
+    "providerAccountId": "guid",
+    "providerCode": "AbacatePay",
+    "environment": "Sandbox",
+    "callbackUrl": "https://merchant.example.com/webhooks/abacate",
+    "events": ["transparent.completed", "transparent.refunded"],
+    "hasWebhookSecret": true,
+    "remoteRegistrationStatus": "Registered",
+    "configuredAt": "2026-06-30T12:34:56.789Z",
+    "updatedAt": "2026-06-30T12:34:56.789Z"
+  }
+  ```
+
+  `hasWebhookSecret` indica apenas se ha um segredo armazenado (boolean), **nunca** o valor. `remoteRegistrationStatus` e a string do enum `ProviderWebhookRemoteStatus` (`NotRegistered`, `Registered`, `RegistrationFailed`, `RemoteRegistrationDeferred`).
+- Erros: mesma matriz do PUT.
+- Tabelas afetadas: `provider_accounts` (somente leitura).
+- Specs relacionadas: mesmas do PUT.
+
 ### `GET /health`
 
 - Status: atual.

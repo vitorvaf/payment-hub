@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using PaymentHub.Application.Webhooks;
+using PaymentHub.Infrastructure.Providers.AbacatePay;
+using PaymentHub.Infrastructure.Providers.AbacatePay.Webhooks;
 
 namespace PaymentHub.Api.Controllers;
 
@@ -24,13 +26,32 @@ public class ProviderWebhooksController : ControllerBase
         string providerCode,
         [FromHeader(Name = "X-Provider-Event-Id")] string? providerEventId,
         [FromHeader(Name = "X-Provider-Event-Type")] string? eventType,
-        [FromHeader(Name = "X-Provider-Signature")] string? signature,
+        // Slice 2-B: AbacatePay uses X-Webhook-Signature. Providers that
+        // pre-dated this contract can keep sending X-Provider-Signature.
+        // Whichever header arrives first wins — we never trust both.
+        [FromHeader(Name = "X-Provider-Signature")] string? legacySignature,
+        [FromHeader(Name = HmacAbacatePayWebhookSignatureVerifier.SignatureHeaderName)] string? abacateSignature,
         CancellationToken cancellationToken)
     {
+        var signature = !string.IsNullOrWhiteSpace(abacateSignature)
+            ? abacateSignature
+            : legacySignature;
+
         Request.EnableBuffering();
         using var reader = new StreamReader(Request.Body, leaveOpen: true);
         var rawBody = await reader.ReadToEndAsync(cancellationToken);
         Request.Body.Position = 0;
+
+        // Slice 2-B: AbacatePay REQUIRES HMAC for every event. Reject the
+        // request before any DB write when the signature header is missing.
+        // For other providers we keep the legacy permissive behavior.
+        if (IsAbacatePay(providerCode) && string.IsNullOrWhiteSpace(signature))
+        {
+            _logger.LogWarning(
+                "Rejected inbound AbacatePay webhook without signature header on path {Path}.",
+                Request.Path);
+            return Unauthorized(new { error = "missing_signature" });
+        }
 
         if (string.IsNullOrWhiteSpace(eventType))
         {
@@ -64,4 +85,8 @@ public class ProviderWebhooksController : ControllerBase
             return UnprocessableEntity(new { error = "webhook_persist_failed", message = ex.Message });
         }
     }
+
+    private static bool IsAbacatePay(string providerCode)
+        => string.Equals(providerCode, "AbacatePay", StringComparison.OrdinalIgnoreCase);
 }
+

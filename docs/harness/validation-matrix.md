@@ -52,6 +52,37 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | 2 | AbacatePay | Docs | `scripts/agent-docs-check.sh` | harness e OpenCode integros | Passou | `PASS` | 2026-06-27 (Slice 2-A) |
 | 2 | AbacatePay | Diff | `git diff --check` | Sem warnings | Sem warnings | `PASS` | 2026-06-27 (Slice 2-A) |
 | 2 | AbacatePay | Sandbox end-to-end | Webhook AbacatePay sandbox real (chave de fato) | Status canonico via HMAC | NAO executado neste slice: webhooks externos completos foram para Slice 2-B. Cobertura de mapper e status cobre o dominio sem chamada externa real. | `SKIPPED` | 2026-06-27 (Slice 2-B pendente) |
+| 2 | 2-B | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings em 9 projetos | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Full Suite | `dotnet test PaymentHub.slnx` | >= 418 testes (348 Slice 2-A baseline + 70 novos do Slice 2-B), zero regressao | 418 passando | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | AbacatePay Coverage | `dotnet test --filter "FullyQualifiedName~AbacatePay"` | HMAC verifier + normalizer + adapter + handler | 125 passando | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Webhook Coverage | `dotnet test --filter "FullyQualifiedName~Webhook"` | Handler + controller + adapter passam | 193 passando | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Provider Coverage | `dotnet test --filter "FullyQualifiedName~Provider"` | Fake/Stripe/MercadoPago + AbacatePay intactos | 135 passando | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | HMAC Failure Path | Adapter retorna `IsValid=false` quando body adulterado | Teste passa | Passou (5 cenarios: signature mismatch, tampered body, malformed base64, missing secret, missing header) | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Normalizer Failure Path | Payload vazio/malformed/null/unsupported retorna invalid | Teste passa | Passou (5 cenarios) | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Provider Account Routing | Handler resolve ProviderAccount por (tenantId, applicationId) e desprotege webhookSecret | Teste passa | Passou (3 cenarios: routing feliz, ProviderAccount ausente, credentials sem webhookSecret) | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Fail-Fast 401 | AbacatePay sem `X-Webhook-Signature` retorna 401 antes de persistir | Teste passa | Passou (case-insensitive + fallback `X-Provider-Signature` + prioridade) | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | No Secret Leak | `ErrorMessage`/`LastError`/`OutboxEvent.LastError` NAO contem `webhookSecret`/signature/body bruto | Teste passa | Passou (3 cenarios explicitos + varios implícitos em todos os testes) | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Architecture | `scripts/agent-architecture-check.sh` | Camadas Clean preservadas | Passou | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Docs | `scripts/agent-docs-check.sh` | harness e OpenCode integros | Passou | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Diff | `git diff --check` | Sem warnings | Sem warnings | `PASS` | 2026-06-29 (Slice 2-B) |
+| 2 | 2-B | Docs | `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md` | Relatorio final + Q1-Q5 respondidas + gaps remanescentes | Criado | `PASS` | 2026-06-29 (Slice 2-B) |
+| 7 | 3-IT | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings em 9 projetos | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | E2E AbacatePay Checkout | `dotnet test --filter "FullyQualifiedName~AbacatePayCheckoutE2ETests"` | 4 testes P1: checkout happy path + webhook valido + idempotencia + assinatura ausente | 4 passando (9.6s) | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | E2E Full | `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~EndToEnd"` | >= 4 testes | 4 passando | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | Integration Suite | `dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj` | >= 14 testes (10 Slice 1-IT + 4 Slice 3-IT) | 14 passando (10.0s) | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | Full Suite | `dotnet test PaymentHub.slnx` | >= 422 testes (418 baseline + 4 E2E), zero regressao | 422 passando | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | HMAC E2E | Adapter verifica HMAC sobre body preservado por roundtrip Postgres | Teste passa | Passou (apos Slice 3-IT fix `jsonb -> text` em `webhook_events.raw_payload`) | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | Attempt Insert | EF Core emite INSERT (nao UPDATE) para novo `PaymentAttempt` | Teste passa | Passou (apos Slice 3-IT fix `_payments.AddAttemptAsync(attempt, ct)`) | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | Idempotency | Webhook duplicado (mesmo `eventId`) retorna mesmo `webhookId` e nao duplica `WebhookEvent` | Teste passa | Passou | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | Fail-Fast 401 | AbacatePay sem `X-Webhook-Signature` retorna 401 antes de persistir `WebhookEvent` | Teste passa | Passou | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | No Leak | Outbox payload NAO contem `apiKey`/`webhookSecret`/body bruto | Teste passa | Passou | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | Outbound Fake Transport | `AbacatePayFakeHttpHandler` captura POST + Bearer + metadata; `ApplicationWebhookCaptureHandler` captura webhook dispatch | Teste passa | Passou | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | Architecture | `scripts/agent-architecture-check.sh` | Camadas Clean preservadas | Passou | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | Docs | `scripts/agent-docs-check.sh` | harness e OpenCode integros | Passou | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | Diff | `git diff --check` | Sem warnings | Sem warnings | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | Docs | `docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md` | Relatorio final + Q1-Q7 respondidas + 2 producoes bugs encontrados (jsonb + EF tracking) | Criado | `PASS` | 2026-06-29 (Slice 3-IT) |
+| 7 | 3-IT | **MUST-NOT-REGRESS** | `EntityConfigurations.cs` linha 151 + `Migrations/20260629205545_ChangeRawPayloadToText.cs` | `webhook_events.raw_payload` deve ser `text`, NAO `jsonb` | `text` (auditado) | `PASS` | 2026-06-29 (Slice 3-IT) — Anti-Regression Rule 1 |
+| 7 | 3-IT | **MUST-NOT-REGRESS** | `WebhookHandlers.cs:204-218` | `ProcessAsync` deve chamar `_payments.AddAttemptAsync(attempt, ct)` explicitamente | Sim (auditado) | `PASS` | 2026-06-29 (Slice 3-IT) — Anti-Regression Rule 2 |
 
 ---
 

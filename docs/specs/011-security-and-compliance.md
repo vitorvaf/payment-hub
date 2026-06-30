@@ -52,7 +52,7 @@ Consolidar regras de seguranca obrigatorias para o MVP.
 | Provider credentials | JSON protegido por criptografia |
 | Application webhook secret | `webhook_secret` persistido como blob cifrado (AES-CBC, chave em `PaymentHub:WebhookSecretEncryptionKey`). Cru apenas em memoria no ponto de assinatura HMAC |
 | Webhook interno | `X-PaymentHub-Signature` HMAC-SHA256 sobre `timestamp.rawBody` |
-| Webhook externo | Assinatura validada quando provider oferecer |
+| Webhook externo (AbacatePay) | `X-Webhook-Signature` HMAC-SHA256(Base64) sobre `rawBody`; segredo compartilhado persistido como `webhookSecret` em `ProviderAccount.EncryptedCredentials` (JSON protegido por AES). Controller rejeita 401 antes de persistir quando header ausente. Worker valida apos resolver `ProviderAccount`. |
 | Logs | correlation id e contexto sem secrets |
 | Tenant/application em endpoints autenticados | Derivado exclusivamente de `ITenantContext` (populado pelo middleware). Body/headers do request nunca podem sobrescrever tenant/application. |
 
@@ -86,6 +86,59 @@ Exemplo C# para gerar hex:
 var signatureBytes = HMACSHA256.HashData(secretBytes, signedPayloadBytes);
 var signature = Convert.ToHexString(signatureBytes).ToLowerInvariant();
 ```
+
+### HMAC de webhook externo — AbacatePay (Slice 2-B — 2026-06-29)
+
+- Algoritmo: `HMAC-SHA256`.
+- Encoding do payload: UTF-8.
+- Formato da assinatura: **Base64**.
+- Header canonico: `X-Webhook-Signature`.
+- Header de fallback: `X-Provider-Signature` (legacy, ainda suportado em AbacatePay).
+- Sem header de timestamp. Replay/duplicate protection vem da coluna `webhook_events.provider_event_id` (idempotencia por `provider_code + provider_event_id`) e da coluna `processing_status` (MarkProcessing).
+- String assinada: `rawBody` (sem timestamp).
+- Tolerancia: nao ha janela — o provider e quem decide quando reenvia. Nos dependemos de idempotencia no Inbox.
+- `rawBody` deve ser o corpo HTTP exatamente como recebido, sem reserializar o JSON.
+
+Exemplo (JS do doc oficial AbacatePay, comecando a ser traduzido em C#):
+
+```text
+rawBody = corpo HTTP exatamente como enviado
+signature = Convert.ToBase64String(HMACSHA256(webhookSecret, UTF8(rawBody)))
+header = "X-Webhook-Signature: <signature>"
+```
+
+Comparacao deve acontecer em **tempo constante** via `CryptographicOperations.FixedTimeEquals(byte[], byte[])`. Mensagens de erro NAO podem vazar:
+- `webhookSecret` (raw ou Base64).
+- A assinatura recebida.
+- O `rawBody` completo.
+- A `apiKey` do `ProviderAccount.EncryptedCredentials`.
+- Stack traces.
+
+Pipeline por camadas (controller + handler + adapter):
+
+- **Controller** (`ProviderWebhooksController.Receive`):
+  - Le `[FromHeader(Name = "X-Webhook-Signature")] string? abacateSignature` e `[FromHeader(Name = "X-Provider-Signature")] string? legacySignature`.
+  - Seleciona `X-Webhook-Signature` quando ambos chegam.
+  - Quando `providerCode == "AbacatePay"` (case-insensitive) e o header de assinatura esta ausente ou branco, retorna `401 Unauthorized { error = "missing_signature" }` **sem** gravar `WebhookEvent` nem chamar o handler.
+  - Providers nao-AbacatePay preservam comportamento legacy.
+
+- **Handler** (`ProcessWebhookEventHandler`):
+  - Para `ProviderCode.AbacatePay` resolve o `ProviderAccount` via `IProviderAccountRepository.GetByCodeAsync(tenantId, applicationId, code)`. Roteamento inicial vem de `data.metadata.{tenantId, applicationId, paymentId}` do payload bruto (parsing tolerante, sem tentativas amplas).
+  - Desprotege `EncryptedCredentials` via `ICredentialProtector.Unprotect`. Extrai `webhookSecret` (preferindo campo explicito, caindo para `secret` legacy).
+  - Passa o segredo ao adapter via `ProviderWebhookRequest.WebhookSecret` (init-only). O segredo NAO e persistido em `WebhookEvent`, NAO e logado, NAO aparece em `LastError`.
+  - Quando o `ProviderAccount` ou o pagamento nao podem ser resolvidos, marca o evento como `Failed` com `LastError` categorizado e seguro.
+  - Quando o adapter diz `IsValid=false`, marca como `Failed` com `LastError` sanitize-ado (remove quebras de linha, NULs, cap em 2000 chars).
+
+- **Adapter** (`AbacatePayProviderAdapter.ParseWebhookAsync`):
+  - Recusa silencioosamente quando `WebhookSecret` ou `Signature` estao ausentes.
+  - Verifica HMAC via `IAbacatePayWebhookSignatureVerifier`. Categorias: `None`, `MissingSignature`, `MalformedSignature`, `MissingSecret`, `SignatureMismatch`.
+  - Normaliza via `IAbacatePayWebhookNormalizer` (eventos `transparent.completed|refunded|disputed|lost`).
+  - Mapeia `PaymentStatus` canonico via `MapEvent` (decisoes documentadas em teste).
+  - Em qualquer falha, `ProviderWebhookParseResult.IsValid=false`, `ErrorMessage` categorizado.
+
+#### Falha de HMAC e seguranca da mensagem
+
+`AbacatePayClientException` e `AbacatePayWebhookClientException` NAO carregam o segredo nem o body bruto. Mesma politica aplicada em todo o pipeline. `.LastError` no banco (coluna `webhook_events.last_error`) nunca tera mais de 2000 caracteres, sem quebra de linha, sem NUL, sem stack.
 
 ### Protecao de `ApplicationClient.WebhookSecret` em repouso
 
@@ -327,6 +380,55 @@ Mantido conforme contrato existente (vide secao "HMAC de webhook interno" acima)
 - WebhookUrl IPv4-mapped IPv4 loopback (`::ffff:127.0.0.1`) rejeitada.
 - WebhookUrl malformada rejeitada.
 - WebhookUrl HTTP loopback aceita somente em Development.
+- HMAC AbacatePay: valido/invalido, secret ausente, header ausente, base64 malformado, body adulterado, body malformado, evento unsupported, metadata ausente, secret nao-AbacatePay preserva caminho legacy.
+- Nenhum teste loga ou persiste `webhookSecret`, `apiKey`, signature recebida, raw body completo ou stack trace.
+- Cobertura E2E do `OutboxDispatcherWorker` (Slice 7-IT): happy path com HMAC valido, HTTP 500/429 como retry seguro, `UnprotectFailure` SEM HTTP POST, evento ja `Sent` nao e' redespachado, fluxo completo AbacatePay ate delivery interno. Detalhes tecnicos em `docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md` e na nova secao "Slice 7-IT — End-to-end dispatcher" abaixo.
+
+### Slice 7-IT — End-to-end dispatcher (2026-06-30)
+
+A Slice 7-IT fecha o gap "cobertura E2E do dispatcher real" do Phase 7. A suite
+`tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs`
+exercita o pipeline de producao integral (`PaymentHub.Api` +
+`HttpApplicationWebhookDispatcher` + `OutboxDispatcherWorker.DispatchOnceAsync`
++ Postgres real) sem chamada externa real. Os invariants abaixo passam a ser
+verificados em E2E alem dos unit tests existentes:
+
+- **HMAC de webhook interno**: `X-PaymentHub-Signature =
+  sha256_hex_lowercase(webhookSecret, "{timestamp}.{rawBody}")` em todos os
+  deliveries; tamper no body OU no timestamp invalida a assinatura; o helper
+  puro `InternalWebhookHmac.Compute/Matches` vive em
+  `tests/PaymentHub.IntegrationTests/Support/ApplicationWebhookCaptureHandler.cs`
+  para que nenhum teste copie a logica do `HmacWebhookSigner`.
+- **Headers `X-PaymentHub-*`**: `event-id`, `event-type`, `timestamp` e
+  `signature` sao todos preenchidos pelo dispatcher real; o fake receiver os
+  expõe em `CapturedRequest` para assercao direta.
+- **Transicao `Sent`**: 2xx do consumer leva o `OutboxEvent` para `Sent`,
+  `SentAt` populado, `LastError = null`, `RetryCount = 0`,
+  `NextRetryAt = null`.
+- **Retry seguro (HTTP nao-2xx)**: `LastError` tem o formato canonico
+  `"HttpFailure: status={code}"`. **NUNCA** contem URL, segredo, blob
+  protegido, body da response ou reason phrase. `RetryCount` incrementa
+  exatamente 1 por iteracao; `NextRetryAt` e futuro.
+- **`UnprotectFailure` aborta cedo**: blob protegido invalido no
+  `ApplicationClient.WebhookSecret` leva a `LastError = "UnprotectFailure"`
+  com `CallCount == 0` no fake receiver. O dispatcher NAO envia HTTP request
+  sem assinatura valida — esse e' o invariant de seguranca mais importante
+  deste slice.
+- **Eventos `Sent`/`Processing`/`Failed` NAO sao reenviados**: a query do
+  worker filtra `Pending` com `next_retry_at` vencido ou nulo; o teste P2.2
+  invoca `DispatchOnceAsync` duas vezes e valida `CallCount == 1` na
+  segunda iteracao.
+- **Caminho completo AbacatePay**: o teste P2.1 dirige o pipeline real
+  checkout -> webhook externo -> `ProcessWebhookEventHandler` ->
+  `OutboxEvent` -> `OutboxDispatcherWorker` -> `HttpApplicationWebhookDispatcher`
+  -> assinatura HMAC valida contra o segredo da `ApplicationClient`,
+  provando que nao ha gap entre Inbox e Outbox em producao.
+
+Os testes E2E NAO dependem do worker hospedado (`BackgroundService`) rodar
+dentro do `WebApplicationFactory`. `OutboxDispatcherWorker.DispatchOnceAsync`
+e' exposto via `InternalsVisibleTo("PaymentHub.IntegrationTests")` em
+`PaymentHub.Worker.csproj` e invocado manualmente pelos testes — a mesma
+decisao de testabilidade da Slice 3-IT.
 
 ## Arquivos relacionados
 
@@ -334,3 +436,30 @@ Mantido conforme contrato existente (vide secao "HMAC de webhook interno" acima)
 - `.github/instructions/security.instructions.md`
 - `src/PaymentHub.Infrastructure.Postgres/Security/`
 - `src/PaymentHub.Worker/OutboxDispatcherWorker.cs`
+- `src/PaymentHub.Infrastructure.Providers/AbacatePay/Webhooks/*`
+- `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md`
+- `docs/audits/slice-2c-abacatepay-webhook-management-report-2026-06-30.md`
+
+### Gerenciamento de webhook AbacatePay via API (Slice 2-C — 2026-06-30)
+
+Os endpoints `PUT`/`GET /api/v1/provider-accounts/{providerAccountId}/webhook` introduzem configuracao explicita de webhook por `ProviderAccount`. As decisoes abaixo sao imperativas:
+
+- `webhookSecret` **nunca** ganha coluna propria. O segredo continua a trafegar apenas dentro de `ProviderAccount.EncryptedCredentials` (JSON protegido por `ICredentialProtector`). A regra em "Provider credentials" continua valida.
+- Toda escrita de `callbackUrl` passa por `WebhookUrlValidator` (re-uso da Slice 7-A.5). Mesma politica HTTPS-only + SSRF (RFC1918, link-local, IMDS, loopback) + excecao `http://localhost` em Development.
+- Eventos aceitos sao **whitelist** literal na camada de validacao: `transparent.completed`, `transparent.refunded`, `transparent.disputed`, `transparent.lost`. Qualquer outro valor e rejeitado em `400`.
+- Tenant e application continuam derivados **exclusivamente** de `ITenantContext` (re-asserting Slice 6-B). O DTO de request NAO expoe `tenantId`/`applicationId`.
+- Controller retorna matriz controlada de status codes: `200`, `400` (validation), `401` (contexto ausente), `404` (id nao existe no escopo), `409` (conta inativa OU nao-AbacatePay), `500` apenas em catch-all. Os payloads de erro NAO carregam `tenantId`/`applicationId`/`providerAccountId`.
+- Response `ProviderAccountWebhookResponseDto` nao expoe `apiKey`, `webhookSecret`, `protectedWebhookSecret` ou `encryptedCredentials` (validado por reflexao em testes). A unica mencao ao segredo e o boolean `hasWebhookSecret`.
+- Memoria: o handler chama `ICredentialProtector.Unprotect` para fazer round-trip das credenciais (`apiKey` + `webhookSecret`). O blob raw nao e mantido em campo de classe; somente em variavel local durante o `HandleAsync`. O GC recolhe ao fim do scope do request.
+- Logs estruturados podem mencionar `providerAccountId`/`tenantId`/`applicationId` e a categoria do `WebhookRemoteStatus` (`RemoteRegistrationDeferred` etc.), mas **nunca** `apiKey`, `webhookSecret` (raw ou Base64), `EncryptedCredentials` ou a URL completa de `callbackUrl` quando ela carrega segredo em query string.
+- `webhook_events` column no banco e **`text`** (NAO `jsonb`). Mesma anti-regression que `webhook_events.raw_payload` (Slice 3-IT, 2026-06-29): `jsonb` reformata o JSON no insert (espaco apos `:` e `,`), o que quebra qualquer consumidor que depender do shape byte-exact. Documentado inline em `EntityConfigurations.cs` e na migration `20260630001726_AddProviderAccountWebhookColumns`.
+- Configuracao da chamada remota: `Providers:AbacatePay:AllowWebhookRegistration` (default `false`). Combinado com `registerRemotely=true` + `webhookSecret` nao-nulo + a policy retornar `true`, o handler chama `IProviderWebhookManagementClient.RegisterWebhookAsync(...)`. O client default (`NoOpProviderWebhookManagementClient`) nao faz HTTP — apenas loga metadata. A implementacao HTTP real (chamada a `POST /webhooks/create`) sera adicionada em slice proprio (sub-seguinte de Slice 2-C), mantendo o no-op como padrao.
+- Erros do `IProviderWebhookManagementClient` NAO propagam o segredo. O handler mapeia exito para `Registered`, falha para `RegistrationFailed` ou `NotRegistered`. Mensagens de erro da implementacao concreta continuam sob a politica "mensagem segura" herdada do Slice 2-A.
+
+### Anti-regression "jsonb normaliza whitespace" (Slice 2-C, 2026-06-30)
+
+Adicionada ao Stack de Conhecimento (Slice 3-IT ja tinha documentado para `webhook_events.raw_payload`):
+
+- `provider_accounts.webhook_events` tem que permanecer como `text`.
+- Qualquer nova coluna que armazene JSON e que possa ser rodada byte-exact round-trip (ex.: `webhookSecret` em `encrypted_credentials` embora esse ja seja `text` por outro motivo) NAO pode ser `jsonb`.
+- Reverter essa coluna para `jsonb` em nova migration quebra `ProviderAccountWebhookPersistenceTests.ProviderAccount_ShouldPersistAllWebhookConfigurationColumns` com `"Expected [...].WebhookEvents to be '[...]' with a length of 48, but '[...]' has a length of 49, differs near " t""`.

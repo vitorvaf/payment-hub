@@ -19,9 +19,9 @@ Legenda de prioridade:
 |-------|-------|---------|-----------|---------|-------|--------|-------------|
 | 1 | Phase 0 | Produto, arquitetura e fronteiras | P0 | M | LOW | `IMPLEMENTED` | — |
 | 2 | Phase 1 | Core domain MVP e API | P0 | L | MEDIUM | `IMPLEMENTED` | Phase 0 |
-| 3 | Phase 2 | Primeiro adapter de provider (AbacatePay) | P0 | M | MEDIUM | `IMPLEMENTING` (Slice 2-A CONCLUIDO 2026-06-27) | Phase 1 |
-| 4 | Phase 3 | Webhooks externos e internos | P0 | M | MEDIUM | `IMPLEMENTING` | Phase 1 |
-| 5 | Phase 7 | Workers, Outbox e processamento assincrono | P1 | M | MEDIUM | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-26; base de integracao entregue 2026-06-26 via Slice 1-IT) | Phase 3, Phase 6 |
+| 3 | Phase 2 | Primeiro adapter de provider (AbacatePay) | P0 | M | MEDIUM | `IMPLEMENTED` (Slice 2-A CONCLUIDO 2026-06-27; Slice 2-B CONCLUIDO 2026-06-29) | Phase 1 |
+| 4 | Phase 3 | Webhooks externos e internos | P0 | M | MEDIUM | `IMPLEMENTING` (Slice 7-A CONCLUIDO 2026-06-26; Slice 2-B CONCLUIDO 2026-06-29 completa webhooks externos AbacatePay) | Phase 1 |
+| 5 | Phase 7 | Workers, Outbox e processamento assincrono | P1 | M | MEDIUM | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-26; base de integracao entregue 2026-06-26 via Slice 1-IT; suite E2E do dispatcher entregue 2026-06-30 via Slice 7-IT) | Phase 3, Phase 6 |
 | 6 | Phase 6 | Seguranca e confiabilidade | P1 | M | HIGH | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-25) | Phase 1 |
 | 7 | Phase 4 | Multi-provider (Stripe + MercadoPago) | P1 | L | MEDIUM | `SPEC_DRAFTED` | Phase 2, Phase 3 |
 | 8 | Phase 9 | Relatorios, metricas e observabilidade | P2 | L | LOW | `SPEC_DRAFTED` | Phase 6, Phase 7 |
@@ -84,6 +84,10 @@ Com base no estado atual (`IMPLEMENTING` em Phases 2, 3, 6, 7) e nos achados P1 
 5. **Slice 6-D**: Politica de bootstrap/admin seed. `[CONCLUIDO 2026-06-18]`
 6. **Slice 1-IT**: Criar primeira fixture de integracao com Postgres (migrations + indices). `[CONCLUIDO 2026-06-26]`
 7. **Slice 2-A**: Implementar adapter AbacatePay funcional com validacao de assinatura de webhook. `[CONCLUIDO 2026-06-27 — client HTTP com Bearer Token, mapper estendido, Adapter refatorado, DI/options/HttpClient registrados, 57 testes AbacatePay + 348 totais, arquitetura/docs-checks verdes; webhooks externos/HMAC ficam em Slice 2-B]`
+8. **Slice 2-B**: Webhooks externos AbacatePay com HMAC-SHA256 (Base64) + normalizacao de eventos `transparent.*` + fail-fast no controller + roteamento por metadata no handler. `[CONCLUIDO 2026-06-29 — 9 testes adapter + 14 testes normalizer + 10 testes verifier + 9 testes handler AbacatePay + 9 testes controller + 418 totais; arquitetura/docs-checks verdes]`
+9. **Slice 3-IT**: Testes E2E do API + Postgres (Testcontainers) + adapter AbacatePay real + fakes de transporte outbound, cobrindo o fluxo de checkout e webhooks externos (4 testes P1: `CreateCheckout_WithAbacatePayFake_PersistsPaymentAndOutbox`, `ProviderWebhook_ValidSignature_UpdatesPaymentAndEnqueuesOutbox`, `ProviderWebhook_DuplicateAbacatePayEvent_IsIdempotent`, `ProviderWebhook_MissingSignature_Rejected401WithoutPersist`). `[CONCLUIDO 2026-06-29 — 14 testes integracao (10 Slice 1-IT preservados + 4 novos), 422 totais; arquitetura/docs-checks verdes; 2 producao bugs encontrados e corrigidos (jsonb -> text em `webhook_events.raw_payload`; `_payments.AddAttemptAsync(attempt, ct)` explicito no `ProcessWebhookEventHandler`)]`
+10. **Slice 2-C**: Endpoints `PUT`/`GET /api/v1/provider-accounts/{id}/webhook` + 4 colunas non-sensitive em `provider_accounts` + `IProviderWebhookManagementClient` abstraction + feature flag opt-in. `[CONCLUIDO 2026-06-30 — 59 unit + 3 integration = +62 net, 484 totais; arquitetura/docs-checks verdes; anti-regression `provider_accounts.webhook_events` `jsonb -> text` espelhada da Slice 3-IT; cliente HTTP real deferred em Slice 2-C.1]`
+11. **Slice 7-IT**: Suite E2E do ciclo Outbox → ApplicationClient webhook (dispatcher real + Postgres real + API real). 7 testes em `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs` (P1: Sent, HMAC, 500 retry, 429 retry, UnprotectFailure; P2: AbacatePay full flow, no-redispatch de Sent). `[CONCLUIDO 2026-06-30 — 491 totais (484 + 7); arquitetura/docs-checks verdes; adicionou `InternalsVisibleTo("PaymentHub.IntegrationTests")` em `PaymentHub.Worker.csproj`; `ApplicationWebhookCaptureHandler` evoluido com `EnqueueResponse` + helper `InternalWebhookHmac`; detalhes em `docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md`]`
 
 ## Slices concluidos apos a geracao inicial (2026-06-26)
 
@@ -101,7 +105,14 @@ Phase 6 e Phase 7 alcancaram 0 gaps P1 proprios em 2026-06-25 e 2026-06-26, resp
 
 Phase 2 (Phase 2 — Primeiro adapter de provider) atinge seu primeiro marco de implementacao com o Slice 2-A em 2026-06-27. Detalhes em `docs/audits/slice-2a-abacatepay-sandbox-report-2026-06-26.md`. Webhooks externos completos (HMAC, normalizacao de eventos) seguem em **Slice 2-B** (a abrir), dependente apenas de decisao de produto entre Phase 2 e Phase 3.
 
-Slices de integracao end-to-end (middleware/checkout/workers com banco real) seguem dependentes de decisao entre Phase 2 e Phase 7. Slice 1-IT (base de testes de integracao com Postgres) foi concluido em 2026-06-26 e permanece verde apos Slice 2-A.
+Slices de integracao end-to-end (middleware/checkout/workers com banco real) seguem dependentes de decisao entre Phase 2 e Phase 7. Slice 1-IT (base de testes de integracao com Postgres) foi concluido em 2026-06-26 e permanece verde apos Slice 2-A, Slice 3-IT, Slice 2-C e Slice 7-IT.
+
+## Status de slices recentes (2026-06-30)
+
+| Slice | Descricao | Data | Notas |
+|-------|-----------|------|-------|
+| **2-C** | PUT/GET para gerenciar inscricao de webhook AbacatePay + 4 colunas non-sensitive | 2026-06-30 | Cliente HTTP real deferred em 2-C.1 |
+| **7-IT** | E2E do dispatcher de Outbox (7 testes) | 2026-06-30 | Multi-instancia continua deferred (7-M1) |
 
 ---
 

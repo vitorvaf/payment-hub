@@ -186,13 +186,55 @@ Removido do codigo de producao e dos registros de DI. Qualquer teste que precise
 - `MissingWebhookUrl` marca como `Failed` sem retry.
 - `WebhookUrl` rejeitada em validator (HTTPS/SSRF) — 80+ testes em `WebhookUrlValidatorTests` + `RegisterApplicationClientValidatorTests`.
 
+## End-to-end integration tests (Slice 7-IT)
+
+Apos a Slice 7-IT, o dispatcher e o `OutboxEvent` sao cobertos por uma suite E2E
+real (`tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs`)
+que sobe `PaymentHub.Api` via `WebApplicationFactory<Program>`, aponta para
+Postgres real (Testcontainers) e invoca `OutboxDispatcherWorker.DispatchOnceAsync`
+manualmente — o worker hospedado (`BackgroundService`) NAO e' hospedado dentro
+do `WebApplicationFactory` por questao de testabilidade (decisao herdada da
+Slice 3-IT). Cada teste:
+
+1. Cria uma `PaymentHubApiFactory` fresca, faz `ResetDatabaseAsync()` e seed via
+   `E2ESeedHelpers` (tenant, application com `WebhookUrl` HTTPS publico + blob
+   protegido por `IWebhookSecretProtector`).
+2. Persiste o `OutboxEvent` via `IOutboxPublisher.EnqueueAsync` (mesma rota do
+   codigo de producao, nao insere direto via `DbContext`).
+3. Constroi `OutboxDispatcherWorker` via `factory.Services` e chama
+   `DispatchOnceAsync(CancellationToken.None)` uma unica vez.
+4. Recarrega o `OutboxEvent` do banco real e asserta `Status`, `RetryCount`,
+   `LastError`, `SentAt` e `NextRetryAt`.
+5. Asserta o `ApplicationWebhookCaptureHandler.Captured` (method, URL, body,
+   headers `X-PaymentHub-*`).
+
+Cobertura atual (P1 + P2):
+
+| Cenario | Path | Ultima transicao esperada |
+|---------|------|---------------------------|
+| Happy path | `payment.checkout.created` | `Sent`, `LastError = null` |
+| HMAC do webhook interno | qualquer evento com secret | `X-PaymentHub-Signature = sha256_hex_lowercase(secret, "{ts}.{body}")` |
+| HTTP 500 do consumer | qualquer evento | `Pending`, `RetryCount = 1`, `LastError = "HttpFailure: status=500"` |
+| HTTP 429 do consumer | qualquer evento | `Pending`, `RetryCount = 1`, `LastError = "HttpFailure: status=429"` |
+| `UnprotectFailure` | secret corrompido | `Pending`, `RetryCount = 1`, `LastError = "UnprotectFailure"`, ZERO HTTP POSTs |
+| Fluxo AbacatePay E2E | checkout + webhook + dispatch | ambos outbox `Sent`, HMAC interno valido |
+| Evento ja `Sent` nao e' redespachado | iteracao 1 + iteracao 2 | `CallCount = 1` na segunda iteracao |
+
+A Slice 7-IT introduziu um helper puro compartilhado
+`InternalWebhookHmac.Compute/Matches` em
+`tests/PaymentHub.IntegrationTests/Support/ApplicationWebhookCaptureHandler.cs`
+para recomputar a assinatura esperada sem copiar a logica de
+`HmacWebhookSigner` em cada teste.
+
 ## Gaps conhecidos (deferidos)
 
 - Sweep automatico de eventos `Processing` orfaos (recovery apos crash do Worker).
 - Concorrencia multi-instancia via `FOR UPDATE SKIP LOCKED` ou lock transacional.
-- Integracao end-to-end com banco real (Slice 1-IT).
 - Headers adicionais B4-security (`X-PaymentHub-Tenant`/`X-PaymentHub-Application`).
 - API `appsettings.json` placeholder para `PaymentHub` (paridade com Worker).
+- `OutboxDispatcherWorker` rodando dentro do `WebApplicationFactory` (decisao
+  explicita da Slice 3-IT — testes continuam invocando `DispatchOnceAsync`
+  diretamente; mudar isso exigira um harness de hosting dentro do teste).
 
 ## Arquivos relacionados
 
@@ -212,7 +254,11 @@ Removido do codigo de producao e dos registros de DI. Qualquer teste que precise
 - `src/PaymentHub.Worker/Program.cs` (fail-fast)
 - `src/PaymentHub.Worker/appsettings.json` (placeholder)
 - `src/PaymentHub.Worker/appsettings.Development.json` (valor dev)
+- `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs` (Slice 7-IT)
+- `tests/PaymentHub.IntegrationTests/Support/ApplicationWebhookCaptureHandler.cs` (fakes Slice 3-IT + Slice 7-IT)
+- `tests/PaymentHub.IntegrationTests/Support/E2ESeedHelpers.cs`
 - `docs/specs/011-security-and-compliance.md`
 - `docs/adr/ADR-0007-webhook-secret-protection.md`
 - `docs/adr/ADR-0010-real-outbox-dispatcher-location.md`
 - `docs/audits/slice-7a-real-outbox-dispatcher-report-2026-06-26.md`
+- `docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md`

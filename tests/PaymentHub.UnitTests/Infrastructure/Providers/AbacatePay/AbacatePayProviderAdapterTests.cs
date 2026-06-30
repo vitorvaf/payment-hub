@@ -6,6 +6,7 @@ using PaymentHub.Application.Abstractions.Security;
 using PaymentHub.Domain.Enums;
 using PaymentHub.Infrastructure.Providers.AbacatePay;
 using PaymentHub.Infrastructure.Providers.AbacatePay.Models;
+using PaymentHub.Infrastructure.Providers.AbacatePay.Webhooks;
 using PaymentHub.UnitTests.Support;
 
 namespace PaymentHub.UnitTests.Infrastructure.Providers.AbacatePay;
@@ -48,7 +49,12 @@ public class AbacatePayProviderAdapterTests
     private static AbacatePayProviderAdapter BuildAdapter(
         FakeAbacatePayClient client,
         ICredentialProtector protector)
-        => new(client, protector, NullLogger<AbacatePayProviderAdapter>.Instance);
+        => new(
+            client,
+            protector,
+            new HmacAbacatePayWebhookSignatureVerifier(),
+            new AbacatePayWebhookNormalizer(),
+            NullLogger<AbacatePayProviderAdapter>.Instance);
 
     [Fact]
     public async Task CreateCheckoutAsync_ShouldUnprotectCredentialsAndCallClient()
@@ -268,18 +274,22 @@ public class AbacatePayProviderAdapterTests
     [Fact]
     public async Task ParseWebhookAsync_ShouldExtractProviderPaymentIdAndStatus()
     {
+        // Slice 2-B: webhook parsing now requires a valid HMAC signature +
+        // webhook secret. The full signature+normalizer contract is
+        // covered by AbacatePayProviderAdapterWebhookTests.
         var adapter = BuildAdapter(new FakeAbacatePayClient(), new FakeCredentialProtector());
 
         var body = """{"data":{"id":"pix_abc","status":"PAID"},"id":"evt_1","event":"payment.updated"}""";
 
         var result = await adapter.ParseWebhookAsync(
-            new ProviderWebhookRequest(body, "sig", new Dictionary<string, string>()),
+            new ProviderWebhookRequest(body, "sig", new Dictionary<string, string>())
+            {
+                WebhookSecret = "unused"
+            },
             CancellationToken.None);
 
-        result.IsValid.Should().BeTrue();
-        result.ProviderPaymentId.Should().Be("pix_abc");
-        result.ProviderStatus.Should().Be("PAID");
-        result.EventType.Should().Be("payment.updated");
+        result.IsValid.Should().BeFalse();
+        result.ErrorMessage.Should().NotBeNull();
     }
 
     /// <summary>

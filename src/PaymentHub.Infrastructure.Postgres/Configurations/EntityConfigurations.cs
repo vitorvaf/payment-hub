@@ -59,6 +59,31 @@ public class ProviderAccountConfiguration : IEntityTypeConfiguration<ProviderAcc
         builder.Property(p => p.Active).HasColumnName("active").IsRequired();
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(p => p.UpdatedAt).HasColumnName("updated_at").IsRequired();
+        // Slice 2-C — webhook management (non-sensitive configuration).
+        //
+        // ANTI-REGRESSION (Slice 3-IT Rule 1, mirrored here). The events
+        // JSON travels only inside `webhook_events` and the application
+        // serialises it with `JsonSerializer.Serialize`. Postgres `jsonb`
+        // normalises whitespace on insert (single space after each `:` and
+        // `,`), which silently mutates the byte shape of the column. We
+        // do NOT need GIN-indexable querying on this JSON, so `text` is
+        // the correct type — it preserves the inserted bytes verbatim,
+        // in line with the Slice 3-IT decision that any opaque JSON
+        // blob that ends up being parsed back by the application
+        // should stay as `text`. See
+        // `docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md`
+        // (Anti-Regression Notes, Rule 1).
+        //
+        // NOTE: `webhookSecret` is NEVER stored in its own column; it
+        // travels only inside `encrypted_credentials` as JSON. The four
+        // columns below hold the merchant-facing target (callback URL),
+        // the events the merchant wants to receive, the timestamp of
+        // the last config edit, and the status of the upstream
+        // registration attempt. They are safe to return via API.
+        builder.Property(p => p.WebhookCallbackUrl).HasColumnName("webhook_callback_url").HasMaxLength(2000);
+        builder.Property(p => p.WebhookEvents).HasColumnName("webhook_events").HasColumnType("text");
+        builder.Property(p => p.WebhookConfiguredAt).HasColumnName("webhook_configured_at");
+        builder.Property(p => p.WebhookRemoteStatus).HasColumnName("webhook_remote_status").HasConversion<string?>().HasMaxLength(32);
         builder.HasIndex(p => new { p.TenantId, p.ApplicationId, p.ProviderCode, p.Environment });
     }
 }
@@ -148,7 +173,21 @@ public class WebhookEventConfiguration : IEntityTypeConfiguration<WebhookEvent>
         builder.Property(w => w.ProviderCode).HasColumnName("provider_code").HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.Property(w => w.ProviderEventId).HasColumnName("provider_event_id").HasMaxLength(200);
         builder.Property(w => w.EventType).HasColumnName("event_type").HasMaxLength(80).IsRequired();
-        builder.Property(w => w.RawPayloadJson).HasColumnName("raw_payload").HasColumnType("jsonb").IsRequired();
+        // ⚠️ ANTI-REGRESSION (Slice 3-IT Rule 1, BLOCKER for Phase 7-IT).
+        // raw_payload MUST remain `text` for byte-exact preservation of the
+        // raw HTTP body. Postgres `jsonb` parses and normalises the JSON on
+        // insert, mutating whitespace (single space after every colon and
+        // comma) and breaking HMAC verification over the raw body. The
+        // application treats the payload as opaque (passed straight to the
+        // provider adapter for verification + normalization), so `text` is
+        // the correct storage type. Migration `20260629205545_ChangeRawPayloadToText`
+        // downgrades the original `jsonb` column. **DO NOT** change this back
+        // to `jsonb` — the E2E test `ProviderWebhook_ValidSignature_UpdatesPaymentAndEnqueuesOutbox`
+        // will fail with `AbacatePay webhook signature invalid (SignatureMismatch)`.
+        // See `docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md`
+        // (Anti-Regression Notes, Rule 1) and `feature_list.md` entry
+        // `PH-PROVIDER-WEBHOOK-RAWPAYLOAD-TEXT`.
+        builder.Property(w => w.RawPayloadJson).HasColumnName("raw_payload").HasColumnType("text").IsRequired();
         builder.Property(w => w.Signature).HasColumnName("signature").HasMaxLength(500);
         builder.Property(w => w.ProcessingStatus).HasColumnName("processing_status").HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.Property(w => w.RetryCount).HasColumnName("retry_count").IsRequired();

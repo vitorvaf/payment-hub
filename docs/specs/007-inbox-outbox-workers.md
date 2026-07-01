@@ -21,16 +21,17 @@ Definir processamento assincrono, retries, concorrencia e idempotencia para Inbo
 ## Fora de escopo
 
 - Broker externo no MVP.
-- Sweep automatico de eventos `Processing` orfaos.
-- Concorrencia multi-instancia via `FOR UPDATE SKIP LOCKED`.
 - Testes de integracao com Postgres real (Slice 1-IT).
+
+> **Slice 7-M1 (2026-06-30) — RESOLVIDO:** Sweep automatico de eventos `Processing` orfaos e concorrencia multi-instancia via `FOR UPDATE SKIP LOCKED` foram implementados nesta slice. Ver secao "Multi-instancia (Slice 7-M1)" abaixo.
 
 ## Regras obrigatorias
 
 - Workers devem ser idempotentes e tolerantes a reprocessamento.
 - Selecionar apenas eventos `Pending` cujo `next_retry_at` esteja vazio ou vencido.
 - Marcar `Processing` ou usar mecanismo equivalente antes de executar trabalho critico.
-- Evitar que dois workers processem o mesmo evento; em Postgres futuro, preferir lock transacional ou `FOR UPDATE SKIP LOCKED`.
+- **Slice 7-M1:** o `SELECT` + `UPDATE` que move o evento para `Processing` deve ser atomico (uma unica transacao) e usar `FOR UPDATE SKIP LOCKED` para garantir que dois workers simultaneos nunca peguem a mesma linha.
+- **Slice 7-M1:** o worker DEVE rodar o sweep de `Processing` orfao antes do claim para recuperar rows deixadas por um worker que caiu ou foi reiniciado.
 - Atualizar `retry_count`, `last_error` e `next_retry_at` em falhas.
 - Apos limite de tentativas, marcar `Failed` e exigir intervencao manual.
 
@@ -79,6 +80,7 @@ Categorias aceitas (`PaymentHub.Domain/Enums/WebhookDispatcherCategory.cs`):
 | `MissingWebhookUrl` (5) | Application sem `WebhookUrl` | nao |
 | `MissingWebhookSecret` (6) | Reservado (nao deve ocorrer) | nao |
 | `UnexpectedDispatcherError` (7) | Excecao nao esperada | nao |
+| `ProcessingOrphaned` (8) | **Slice 7-M1:** row estava em `Processing` alem do TTL; sweep moveu para `Pending` | nao |
 
 `OutboxEvent.MarkRetryWithStatus(WebhookDispatcherCategory, int statusCode, DateTime nextRetryAt)` e `OutboxEvent.MarkFailedWithStatus(WebhookDispatcherCategory, int statusCode)` sao os metodos publicos para atualizar `LastError`.
 
@@ -162,6 +164,93 @@ O `HttpClient` e obtido via `IHttpClientFactory.CreateClient("application-webhoo
 
 Removido do codigo de producao e dos registros de DI. Qualquer teste que precise simular o dispatcher usa `Mock<IApplicationWebhookDispatcher>`.
 
+## Multi-instancia (Slice 7-M1)
+
+> Implementado em 2026-06-30. Resolve os gaps P1-multi-instance (`FOR UPDATE SKIP LOCKED`) e M1-security (sweep automatico de `Processing` orfao) que estavam documentados em `docs/adr/ADR-0010-real-outbox-dispatcher-location.md` e nos relatorios de auditoria do Slice 7-A.
+
+### Claim transacional com `FOR UPDATE SKIP LOCKED`
+
+O Worker agora chama `IOutboxRepository.ClaimPendingForDispatchAsync(batchSize, now, ct)` em vez do antigo `GetPendingForDispatchAsync`. A implementacao (`OutboxRepository` em `src/PaymentHub.Infrastructure.Postgres/Repositories/Repositories.cs`) abre uma transacao `ReadCommitted` no `NpgsqlConnection` raw (EF Core 10 nao traduz `SKIP LOCKED` em LINQ), executa:
+
+```sql
+SELECT id
+FROM outbox_events
+WHERE status = 'Pending'
+  AND (next_retry_at IS NULL OR next_retry_at <= @now)
+ORDER BY created_at
+FOR UPDATE SKIP LOCKED
+LIMIT @batchSize;
+
+UPDATE outbox_events
+SET status = 'Processing',
+    processing_started_at = @now,
+    updated_at = @now
+WHERE id = ANY(@claimedIds);
+```
+
+e devolve as entidades recarregadas via EF Core (com `AsNoTracking`) em ordem de `created_at`. As duas operacoes rodam **na mesma transacao**; o commit so ocorre depois do UPDATE. Concorrencia multi-instancia:
+
+- Worker A pega `SELECT FOR UPDATE` em N rows; Worker B ve as locks via `SKIP LOCKED` e pula para as proximas disponiveis.
+- Worker B nunca recebe uma row que Worker A ja claimou.
+- Crash do Worker A entre SELECT e UPDATE = a transacao faz rollback automaticamente; nenhuma row fica em `Processing` para sempre.
+
+### `OutboxEvent.ProcessingStartedAt`
+
+Nova coluna non-sensitive (`timestamp with time zone`, nullable) que registra o instante exato em que o claim moveu a row para `Processing`. Limpa em **toda** saida de `Processing` (`MarkSent`, `MarkRetryWithCategory`, `MarkRetryWithStatus`, `MarkFailedWithCategory`, `MarkFailedWithStatus`, `RequeueOrphaned`). Worker faz sanity-check: se o claim devolve uma row em estado invalido (Pending ou sem `ProcessingStartedAt`), o Worker loga `Error` e pula o dispatch (anti-regressao contra remocao futura acidental do UPDATE).
+
+### Sweep de `Processing` orfao
+
+`IOutboxRepository.SweepOrphanedProcessingAsync(cutoff, ct)` faz um unico `UPDATE` atomico que move rows `Processing` com `processing_started_at < cutoff` de volta para `Pending`. Implementacao via `ExecuteSqlRawAsync` (uma unica round-trip, sem EF tracker):
+
+```sql
+UPDATE outbox_events
+SET status = 'Pending',
+    retry_count = retry_count + 1,
+    last_error = 'ProcessingOrphaned',
+    next_retry_at = NULL,           -- imediato, mesma iteracao do claim
+    processing_started_at = NULL,
+    updated_at = @now
+WHERE status = 'Processing'
+  AND processing_started_at IS NOT NULL
+  AND processing_started_at < @cutoff;
+```
+
+`cutoff = now - OutboxProcessingTimeoutSeconds` (default 900s = 15 minutos). O Worker chama o sweep **antes** do claim em toda iteracao de `DispatchOnceAsync`; o log `Information` reporta quantas rows foram recuperadas. Defaults e tuning:
+
+- `PaymentHubOptions.OutboxProcessingTimeoutSeconds = 900` (production). Cobrir o `WebhookHttpTimeoutSeconds = 10s` mais retries, sem SLA apertado.
+- Tune **para baixo** em ambientes com SLO de entrega apertado (ex.: 60s).
+- Tune **para cima** se dispatches legitimos demoram mais de 15min.
+- `last_error` recebe **apenas** o literal `"ProcessingOrphaned"` (enum value). Nunca o motivo original do crash, a URL, o segredo, o body, a stack trace. O sweep NAO reabre rows terminais (`Sent`, `Failed`).
+
+### Indice composto
+
+Migration `20260630184619_AddOutboxProcessingStartedAtAndIndexes` substitui `(status, next_retry_at)` por `(status, next_retry_at, created_at)` para servir o `ORDER BY created_at` do claim sem sort step. Adiciona tambem um indice parcial `(status, processing_started_at) WHERE status = 'Processing'` que cobre o sweep e permanece pequeno em steady state (so' rows em `Processing` entram no indice).
+
+### Tenant guard (inalterado)
+
+A regra de tenant guard ja' documentada no `HttpApplicationWebhookDispatcher` (linha 137 desta spec) NAO muda: a row ja' vem com `tenant_id` + `application_id`, e o dispatcher chama `_apps.GetByTenantAndIdAsync(tenantId, applicationId, ct)`. O claim multi-instancia nao introduz nenhum caminho cross-tenant.
+
+### Garantias operacionais
+
+- **Sem double-dispatch:** testado por `OutboxDispatcherConcurrencyTests.ShouldNotDoubleDispatch_WhenTwoInstancesRunConcurrently` (2 workers concorrentes, 1 evento, `CallCount = 1`).
+- **Distribuicao sem perdas:** testado por `OutboxDispatcherConcurrencyTests.ShouldDistributePendingEventsAcrossConcurrentInstances` (10 eventos, 3 workers, `CallCount = 10`, todos `Sent`).
+- **Sweep recupera crash:** testado por `OutboxProcessingSweepTests.OutboxSweep_ShouldRequeueOrphanedProcessingEvents` (Processing de 2h atras, `OutboxProcessingTimeoutSeconds = 60`, sweep + claim na mesma iteracao entregam o webhook).
+- **Sweep NAO perturba workers ativos:** testado por `OutboxProcessingSweepTests.OutboxSweep_ShouldNotRequeueRecentProcessingEvents` (Processing de 1s atras, `OutboxProcessingTimeoutSeconds = 60`, row intacta).
+- **Sweep NAO reabre terminais:** testado por `OutboxProcessingSweepTests.OutboxSweep_ShouldNotReopenTerminalEvents`.
+- **Claim respeita `NextRetryAt`:** testado por `OutboxProcessingSweepTests.OutboxDispatcher_ShouldRespectNextAttemptAt`.
+- **Claim respeita `OutboxWorkerBatchSize`:** testado por `OutboxProcessingSweepTests.OutboxDispatcher_ShouldRespectBatchSize_WhenClaimingPendingEvents` (10 eventos, batch=3, 4 iteracoes para entregar tudo).
+
+### Migracao aplicada
+
+`src/PaymentHub.Infrastructure.Postgres/Migrations/20260630184619_AddOutboxProcessingStartedAtAndIndexes.cs`:
+
+- `AddColumn processing_started_at timestamptz NULL`
+- `DropIndex IX_outbox_events_status_next_retry_at`
+- `CreateIndex IX_outbox_events_status_next_retry_at_created_at`
+- `CreateIndex IX_outbox_events_status_processing_started_at` (partial, `WHERE status = 'Processing'`)
+
+`OutboxEvent.payload` permanece `jsonb` (decisao do Slice 7-IT, NAO regressao). `webhook_events.raw_payload` permanece `text` (decisao do Slice 3-IT, NAO regressao). `provider_accounts.webhook_events` permanece `text` (decisao do Slice 2-C, NAO regressao).
+
 ## Criterios de aceite
 
 - Evento processado com sucesso e marcado como finalizado.
@@ -185,6 +274,13 @@ Removido do codigo de producao e dos registros de DI. Qualquer teste que precise
 - `UnprotectFailure` nao envia HTTP request.
 - `MissingWebhookUrl` marca como `Failed` sem retry.
 - `WebhookUrl` rejeitada em validator (HTTPS/SSRF) — 80+ testes em `WebhookUrlValidatorTests` + `RegisterApplicationClientValidatorTests`.
+- **Slice 7-M1:** claim com `FOR UPDATE SKIP LOCKED` nao entrega o mesmo row a dois workers (`OutboxDispatcherConcurrencyTests.ShouldNotDoubleDispatch_WhenTwoInstancesRunConcurrently`).
+- **Slice 7-M1:** distribuicao de N eventos entre M workers preserva `CallCount == N` sem perdas nem duplicacoes (`OutboxDispatcherConcurrencyTests.ShouldDistributePendingEventsAcrossConcurrentInstances`).
+- **Slice 7-M1:** sweep recupera `Processing` orfao dentro do TTL configurado (`OutboxProcessingSweepTests.OutboxSweep_ShouldRequeueOrphanedProcessingEvents`).
+- **Slice 7-M1:** sweep nao perturba `Processing` recente de outro worker (`OutboxProcessingSweepTests.OutboxSweep_ShouldNotRequeueRecentProcessingEvents`).
+- **Slice 7-M1:** sweep nao reabre `Sent`/`Failed` (`OutboxProcessingSweepTests.OutboxSweep_ShouldNotReopenTerminalEvents`).
+- **Slice 7-M1:** claim respeita `NextRetryAt` futuro (`OutboxProcessingSweepTests.OutboxDispatcher_ShouldRespectNextAttemptAt`).
+- **Slice 7-M1:** claim respeita `OutboxWorkerBatchSize` (`OutboxProcessingSweepTests.OutboxDispatcher_ShouldRespectBatchSize_WhenClaimingPendingEvents`).
 
 ## End-to-end integration tests (Slice 7-IT)
 
@@ -226,10 +322,17 @@ A Slice 7-IT introduziu um helper puro compartilhado
 para recomputar a assinatura esperada sem copiar a logica de
 `HmacWebhookSigner` em cada teste.
 
+Apos a Slice 7-M1, a suite E2E inclui tambem `OutboxDispatcherConcurrencyTests`
+(2 testes: 1 evento + 2 workers concorrentes; 10 eventos + 3 workers concorrentes
+com 5 iteracoes por worker) e `OutboxProcessingSweepTests` (5 testes: requeue
+de orfao, preservacao de Processing recente, nao-reabertura de terminais,
+respect a `NextRetryAt`, respect a `OutboxWorkerBatchSize`). Estas suites
+operam contra o mesmo `PaymentHubApiFactory` + Testcontainer Postgres
+introduzido na Slice 3-IT e seguem o mesmo padrao de invocacao manual
+de `OutboxDispatcherWorker.DispatchOnceAsync`.
+
 ## Gaps conhecidos (deferidos)
 
-- Sweep automatico de eventos `Processing` orfaos (recovery apos crash do Worker).
-- Concorrencia multi-instancia via `FOR UPDATE SKIP LOCKED` ou lock transacional.
 - Headers adicionais B4-security (`X-PaymentHub-Tenant`/`X-PaymentHub-Application`).
 - API `appsettings.json` placeholder para `PaymentHub` (paridade com Worker).
 - `OutboxDispatcherWorker` rodando dentro do `WebApplicationFactory` (decisao

@@ -108,3 +108,30 @@ Quando a slice cobre o despacho real do outbox para o webhook interno do `Applic
   dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj
   ```
 - Migration nova NAO e' necessaria para esta slice (todo o storage ja existe: `outbox_events.payload`/`status`/`last_error`/`retry_count`/`next_retry_at`/`sent_at`). Mudancas de storage ficam para o Fase 7 multi-instancia (`FOR UPDATE SKIP LOCKED`, sweep de `Processing` orfao).
+
+## Slice-specific (Phase 7 / Slice 7-M1 — Outbox multi-instancia: SKIP LOCKED + sweep de Processing orfao)
+
+Quando a slice cobre claim transacional com `FOR UPDATE SKIP LOCKED`, sweep automatico de `Processing` orfao, ou qualquer mudanca em `OutboxRepository`/`OutboxDispatcherWorker`:
+
+- **`OutboxRepository.ClaimPendingForDispatchAsync` DEVE ser implementado com `NpgsqlConnection` raw + `BeginTransactionAsync(IsolationLevel.ReadCommitted)` + `SELECT ... FOR UPDATE SKIP LOCKED LIMIT @batchSize` + `UPDATE outbox_events SET status='Processing', processing_started_at=@now` em uma unica transacao.** Nao usar `EF Core LINQ` puro: nao traduz `SKIP LOCKED`. A conexao e' obtida via `_db.Database.GetDbConnection()` (EF Core owns the connection) e NAO deve ser disposed. Fechar a conexao apenas se ela estava fechada antes do claim (`connectionWasClosed` flag).
+- **`SweepOrphanedProcessingAsync` DEVE usar `ExecuteSqlRawAsync` com parametros nomeados (`@now`, `@cutoff`)** e template SQL estavel para `EXPLAIN`. NAO usar `ExecuteSqlInterpolated` (risco de SQL injection). Filtro obrigatorio: `WHERE status='Processing' AND processing_started_at IS NOT NULL AND processing_started_at < @cutoff`.
+- **`last_error` do sweep DEVE ser exatamente o literal `'ProcessingOrphaned'`** (hardcoded no template). NAO usar `ex.Message`, URL, blob, stack trace ou qualquer dado sensivel. Esta politica e' enforced pela propria SQL query; testes confirmam via `LastError.Should().Be("ProcessingOrphaned")`.
+- **`next_retry_at` no sweep DEVE ser `NULL` (NAO `@now`)** para garantir que a row e' imediatamente re-disparavel na mesma iteracao do Worker. Se gravarmos `@now`, a comparacao `next_retry_at <= @now` no claim pode falhar por microsegundos, atrasando a entrega em um tick.
+- **Worker NAO chama `MarkProcessing` separado.** O claim ja entrega rows em `Processing`. `OutboxDispatcherWorker.DispatchOnceAsync` removeu o `outbox.MarkProcessing()` + `eventStore.SaveAsync()` separado. Qualquer regressao que reintroduza esse padrao re-abre o race window do SKIP LOCKED.
+- **Worker faz sanity-check no claim:** se `Status != Processing` ou `ProcessingStartedAt == null`, loga `Error` e pula o dispatch (anti-regressao contra remocao futura acidental do `UPDATE` no claim path).
+- **`OutboxEvent.ProcessingStartedAt` e' `timestamptz NULL`, NAO `jsonb`.** E' um timestamp, nao JSON. Nao confunda com a regra `payload` continua `jsonb`.
+- **`outbox_events.payload` continua `jsonb`** (decisao Slice 7-IT, NAO regressao). A Slice 7-M1 NAO toca nesta coluna.
+- **`webhook_events.raw_payload` continua `text`** (decisao Slice 3-IT, NAO regressao). Idem `provider_accounts.webhook_events` (decisao Slice 2-C).
+- **Migration `20260630184619_AddOutboxProcessingStartedAtAndIndexes` e' obrigatoria.** `processing_started_at` e' nullable, NAO tem default. Indices: `(status, next_retry_at, created_at)` substitui `(status, next_retry_at)`; partial `(status, processing_started_at) WHERE status='Processing'` para o sweep. Confirmar com `dotnet ef migrations list` + diff visual que nao ha coluna `jsonb` acidental.
+- **`OutboxDispatcherWorker` continua NAO hospedado dentro do `WebApplicationFactory`** (re-asserting Slice 7-IT). Testes invocam `DispatchOnceAsync` via `factory.Services` (`InternalsVisibleTo("PaymentHub.IntegrationTests")` em `PaymentHub.Worker.csproj`). Cada worker usa seu proprio `IServiceScope` + `PaymentHubDbContext` (EF Core DbContext nao e' thread-safe; compartilhar mascara bugs reais).
+- **Filtros de teste E2E cobrem os caminhos novos:**
+  ```bash
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~OutboxDispatcherConcurrency"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~OutboxProcessingSweep"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~OutboxDispatcher"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~EndToEnd"
+  dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj
+  ```
+- **Suite esperada apos Slice 7-M1: 498 testes (467 unit + 31 integration).** Regressao de teste count abaixo de 495 indica quebra em alguma das suites. Regressao acima de 500 indica teste novo nao contabilizado.
+- **Configuracao:** `PaymentHubOptions.OutboxProcessingTimeoutSeconds` (default 900). Documentar override em `appsettings.json` se o ambiente tiver SLO de entrega apertado. Suite E2E passa `Options.Create(new PaymentHubOptions { OutboxProcessingTimeoutSeconds = 1 })` para exercitar o sweep em escala de teste.
+- **Anti-flaky em testes de concorrencia:** se P1.1 (`ShouldNotDoubleDispatch_WhenTwoInstancesRunConcurrently`) flake-ar, adicionar `await Task.Delay(10)` entre os dois `DispatchOnceAsync` para que o primeiro worker tenha chance de claimar primeiro. Ainda exercita SKIP LOCKED (segundo worker ve a lock) sem a corrida rara de microsegundo.

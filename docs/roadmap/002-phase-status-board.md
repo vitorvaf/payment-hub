@@ -13,7 +13,7 @@ Data de referencia: 2026-06-30
 | 4 | Multi-Provider | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 2 + Phase 6 + Phase 7 (Phase 2 agora `IMPLEMENTED`) |
 | 5 | Painel Admin | `NOT_STARTED` | 0 | 0 | Aguarda Phase 6 |
 | 6 | Seguranca e Confiabilidade | `IMPLEMENTING` | **0 proprios³** | 1 (audit log P2-3) | Aguarda P2-3 |
-| 7 | Workers e Outbox | `IMPLEMENTING` | **0 proprios⁴** | 1 (multi-instancia + sweep Processing orfao; e2e API+Worker RESOLVIDO via Slice 7-IT 2026-06-30) | Aguarda Slice 7-M1 (multi-instancia) |
+| 7 | Workers e Outbox | `IMPLEMENTED` | 0 proprios⁴ | 0 (multi-instancia + sweep Processing orfao RESOLVIDO via Slice 7-M1 2026-06-30; e2e API+Worker RESOLVIDO via Slice 7-IT 2026-06-30; cobertura E2E 498 testes 7-M1+7-IT) | Aguarda Phase 6 (validacao final) |
 | 8 | Conciliacao Financeira | `NOT_STARTED` | 0 | 0 | Aguarda Phase 4 + 7 |
 | 9 | Relatorios e Observabilidade | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 6 + 7 |
 | 10 | Evolucoes Futuras | `NOT_STARTED` | 0 | 0 | Backlog de produto |
@@ -38,7 +38,7 @@ Notas:
 
 ³ Phase 6 esta com 0 gaps P1 proprios apos o Slice 6-C. Os 5 gaps P1 originais da auditoria de 2026-06-17 foram resolvidos pelos Slices 6-A, 6-B, 6-C e 6-D. A fase continua `IMPLEMENTING` ate que P2-3 (AuditLog em handlers administrativos) seja fechado.
 
-⁴ Phase 7 esta com 0 gaps P1 proprios apos o Slice 7-A (2026-06-26), a entrega da base de integracao via Slice 1-IT (2026-06-26: migrations + repositorios principais + Outbox via Testcontainers, 10 testes passando) e a suite E2E do dispatcher via Slice 7-IT (2026-06-30: 7 testes em `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs` cobrindo Sent, HMAC, retry 500/429, UnprotectFailure, fluxo AbacatePay e no-redispatch de Sent). A fase continua `IMPLEMENTING` ate que gaps P2 remanescentes (sweep de eventos `Processing` orfaos, `FOR UPDATE SKIP LOCKED` para multi-instancia) sejam fechados em `Slice 7-M1`.
+⁴ Phase 7 alcancou 0 gaps P1 proprios apos o Slice 7-A (2026-06-26), a entrega da base de integracao via Slice 1-IT (2026-06-26: migrations + repositorios principais + Outbox via Testcontainers, 10 testes passando), a suite E2E do dispatcher via Slice 7-IT (2026-06-30: 7 testes em `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs` cobrindo Sent, HMAC, retry 500/429, UnprotectFailure, fluxo AbacatePay e no-redispatch de Sent) e a multi-instancia + sweep de `Processing` orfao via Slice 7-M1 (2026-06-30: 7 testes em `OutboxDispatcherConcurrencyTests` + `OutboxProcessingSweepTests`; cobertura E2E total de Phase 7 = 498 testes). Phase 7 promovida a `IMPLEMENTED` em 2026-06-30; a fase NAO e `VALIDATED` ate Phase 6 estar fechada por completo (P2-3 audit log).
 
 ---
 
@@ -75,7 +75,7 @@ Notas:
 
 Detalhes:
 - Slice 2-B em `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md`. Phase 2 passa a `IMPLEMENTED`. Phase 3 mantem status `IMPLEMENTING` ate webhooks de Stripe/MercadoPago serem cobertos (Phase 4).
-- Slice 7-IT em `docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md`. Phase 7 continua `IMPLEMENTING` ate multi-instancia (`Slice 7-M1`).
+- Slice 7-IT em `docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md`. Phase 7 alcancou `IMPLEMENTED` apos a Slice 7-M1 (2026-06-30).
 - Slice 2-C em `docs/audits/slice-2c-abacatepay-webhook-management-report-2026-06-30.md`. Cliente HTTP real para `POST /v2/webhooks/create` continua deferred em `Slice 2-C.1`.
 
 ### Gaps P1 resolvidos (auditoria de 2026-06-17)
@@ -99,17 +99,17 @@ Fonte: `docs/audits/spec-adherence-audit-2026-06-17.md`
 | P2-3 | Acoes administrativas sensiveis nao gravam `AuditLog` | Phase 6 | Proximo slice de Phase 6 |
 | P2-4 | Integridade referencial no banco e parcial (poucas FKs) | Phase 1 | ADR-0009 (proposto) |
 | P2-5 | Documentacao de arquitetura usa formato antigo de assinatura HMAC | Phase 0 | Slice documental |
-| M1-security (novo) | Sweep automatico de eventos `Processing` orfaos | Phase 7 | Slice 7-M1 (multi-instancia) |
-| C.3-qa (novo) | `FOR UPDATE SKIP LOCKED` em `OutboxRepository` para multi-instancia | Phase 7 | Slice 7-IT (multi-instancia) |
+| M1-security (novo) | Sweep automatico de eventos `Processing` orfaos | Phase 7 | **Slice 7-M1 `[RESOLVIDO 2026-06-30]`** |
+| C.3-qa (novo) | `FOR UPDATE SKIP LOCKED` em `OutboxRepository` para multi-instancia | Phase 7 | **Slice 7-M1 `[RESOLVIDO 2026-06-30]`** |
 | B4-security (novo) | Headers `X-PaymentHub-Tenant`/`X-PaymentHub-Application` nao validados | Phase 3, 7 | Deferred (HMAC ja garante autenticidade) |
 
 ---
 
 ## Proximo bloco de trabalho recomendado
 
-### Bloco A — Seguranca e Confiabilidade (Phase 6 + Phase 7) — `CONCLUIDO 2026-06-26`
+### Bloco A — Seguranca e Confiabilidade (Phase 6 + Phase 7) — `CONCLUIDO 2026-06-30`
 
-Os 5 gaps P1 da auditoria de 2026-06-17 foram resolvidos. Phase 6 e Phase 7 estao com 0 gaps P1 proprios.
+Phase 6 e Phase 7 estao `IMPLEMENTED`. Phase 6 mantem `IMPLEMENTING` ate P2-3 (AuditLog em handlers administrativos) ser fechado (escopo proprio da Phase 6; documentado em `Bloco D`). Phase 7 atingiu `IMPLEMENTED` em 2026-06-30 apos a Slice 7-M1 fechar os 2 gaps P2 proprios remanescentes (sweep automatico de `Processing` orfao e `FOR UPDATE SKIP LOCKED`). A fase NAO e `VALIDATED` enquanto Phase 6 aguarda P2-3.
 
 ```
 Slice 6-A  Enforcement de TenantStatus.Active + ApplicationStatus.Active   [CONCLUIDO 2026-06-17]
@@ -117,6 +117,8 @@ Slice 7-A  Substituir NoopApplicationWebhookDispatcher por HTTP real       [CONC
 Slice 6-B  RegisterProviderAccountHandler via ITenantContext                [CONCLUIDO 2026-06-18]
 Slice 6-C  Protecao de ApplicationClient.WebhookSecret em repouso          [CONCLUIDO 2026-06-25]
 Slice 6-D  Politica de bootstrap/admin + AuditLog em handlers administrativos  [CONCLUIDO 2026-06-18 — politica de bootstrap; P2-3 pendente]
+Slice 7-IT Suite E2E do dispatcher real ate delivery interno                 [CONCLUIDO 2026-06-30]
+Slice 7-M1 Outbox multi-instancia: SKIP LOCKED + sweep de Processing orfao [CONCLUIDO 2026-06-30 — fecha M1-security + C.3-qa; Phase 7 atinge IMPLEMENTED]
 ```
 
 ### Bloco B — Testes de Integracao (Phase 1 + 3 + 7)
@@ -127,6 +129,7 @@ Criar primeira fixture de integracao com Testcontainers ou Docker Compose.
 Slice 1-IT  Fixture Postgres + migrations + indices criticos + repositorios principais   [CONCLUIDO 2026-06-26]
 Slice 3-IT  Testes E2E da API + Postgres + adapter AbacatePay + fakes de transporte  [CONCLUIDO 2026-06-29 — 4 testes P1 cobrindo checkout + webhook valido + idempotencia + fail-fast 401; 2 producao bugs encontrados e corrigidos (jsonb->text em webhook_events.raw_payload; _payments.AddAttemptAsync explicito no ProcessWebhookEventHandler); detalhes em docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md]
 Slice 7-IT  Suite E2E do ciclo Outbox → ApplicationClient webhook  [CONCLUIDO 2026-06-30 — 7 testes P1+P2 cobrindo Sent, HMAC, retry 500/429, UnprotectFailure, fluxo AbacatePay completo e no-redispatch de Sent; adicionou InternalsVisibleTo("PaymentHub.IntegrationTests") em PaymentHub.Worker.csproj; ApplicationWebhookCaptureHandler evoluido com EnqueueResponse + InternalWebhookHmac helper; detalhes em docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md]
+Slice 7-M1 Outbox multi-instancia: SKIP LOCKED + sweep de Processing orfao  [CONCLUIDO 2026-06-30 — 7 testes E2E (2 OutboxDispatcherConcurrencyTests + 5 OutboxProcessingSweepTests); ClaimPendingForDispatchAsync em transacao unica com FOR UPDATE SKIP LOCKED + UPDATE atomico (nao double-dispatch entre workers); SweepOrphanedProcessingAsync via single ExecuteSqlRawAsync + ProcessingStartedAt; sane-check anti-regressao no Worker; migration 20260630184619_AddOutboxProcessingStartedAtAndIndexes; PaymentHubOptions.OutboxProcessingTimeoutSeconds=900 (default, configuravel); OutboxEvent.ProcessingStartedAt (timestamptz NULL) + WebhookDispatcherCategory.ProcessingOrphaned (8); Worker NAO chama MarkProcessing separado; suite E2E total de Phase 7 = 498 testes; detalhes em docs/audits/slice-7-m1-outbox-multi-instance-report-2026-06-30.md]  
 ```
 
 ### Bloco C — Provider AbacatePay (Phase 2) — `CONCLUIDO 2026-06-29`
@@ -154,10 +157,10 @@ Slice 5-C  UI minima de gestao de tenants/applications/provider accounts
 | Indicador | Valor atual | Meta |
 |-----------|------------|------|
 | Testes unitarios passando | 467 | >= 64 |
-| Testes de integracao (Postgres real) | 24 (10 Slice 1-IT + 4 Slice 3-IT + 3 Slice 2-C + 7 Slice 7-IT) | >= 5 |
+| Testes de integracao (Postgres real) | 31 (10 Slice 1-IT + 4 Slice 3-IT + 3 Slice 2-C + 7 Slice 7-IT + 2 Slice 7-M1 concurrency + 5 Slice 7-M1 sweep) | >= 5 |
 | Gaps P0 abertos | 0 | 0 |
 | Gaps P1 abertos | **0** | 0 |
-| Gaps P2 abertos | 6 (P2-3 audit log pendente; M1-security/C.3-qa multi-instancia pendente; B4-security headers deferred; P2-4 FKs pendente; P2-5 doc HMAC desatualizada pendente; P2-2 RESOLVIDO) | <= 2 |
+| Gaps P2 abertos | 4 (P2-3 audit log pendente Phase 6; B4-security headers deferred; P2-4 FKs pendente; P2-5 doc HMAC desatualizada pendente; M1-security + C.3-qa RESOLVIDO 2026-06-30 via Slice 7-M1; P2-2 RESOLVIDO 2026-06-30 via Slice 7-IT) | <= 2 |
 | Build status | Limpo | Limpo |
 | Providers reais funcionais | 1 (AbacatePay PIX sandbox + webhooks externos) | >= 1 (AbacatePay) |
 
@@ -178,3 +181,4 @@ Slice 5-C  UI minima de gestao de tenants/applications/provider accounts
 - `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md`
 - `docs/audits/slice-2c-abacatepay-webhook-management-report-2026-06-30.md`
 - `docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md`
+- `docs/audits/slice-7-m1-outbox-multi-instance-report-2026-06-30.md`

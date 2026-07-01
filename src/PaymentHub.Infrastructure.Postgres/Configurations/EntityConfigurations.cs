@@ -220,9 +220,24 @@ public class OutboxEventConfiguration : IEntityTypeConfiguration<OutboxEvent>
         builder.Property(o => o.LastError).HasColumnName("last_error").HasMaxLength(2000);
         builder.Property(o => o.SentAt).HasColumnName("sent_at");
         builder.Property(o => o.NextRetryAt).HasColumnName("next_retry_at");
+        // Slice 7-M1 — multi-instance support. `processing_started_at` is the timestamp the
+        // row was atomically flipped to `Processing` by `ClaimPendingForDispatchAsync`. The
+        // orphan sweep uses it to detect rows whose worker died mid-dispatch. Nullable because
+        // every non-`Processing` state (Pending/Sent/Failed) must have it cleared by the
+        // entity transition methods. See `OutboxEvent.MarkProcessing`/`MarkSent`/etc.
+        builder.Property(o => o.ProcessingStartedAt).HasColumnName("processing_started_at");
         builder.Property(o => o.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(o => o.UpdatedAt).HasColumnName("updated_at").IsRequired();
-        builder.HasIndex(o => new { o.Status, o.NextRetryAt });
+        // Claim index covers `ClaimPendingForDispatchAsync`: filters on `status = 'Pending'`
+        // plus `next_retry_at IS NULL OR next_retry_at <= @now`, ordered by `created_at`.
+        // The previous `(status, next_retry_at)` index is replaced by `(status, next_retry_at, created_at)`
+        // so the ORDER BY can be served from the index without a sort step.
+        builder.HasIndex(o => new { o.Status, o.NextRetryAt, o.CreatedAt });
+        // Sweep index covers `SweepOrphanedProcessingAsync`: filters on `status = 'Processing'`
+        // plus `processing_started_at < @cutoff`. Partial index keeps it small in steady state
+        // (only `Processing` rows are present in the index).
+        builder.HasIndex(o => new { o.Status, o.ProcessingStartedAt })
+            .HasFilter("status = 'Processing'");
         builder.HasIndex(o => o.CreatedAt);
     }
 }

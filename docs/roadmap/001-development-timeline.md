@@ -21,7 +21,7 @@ Legenda de prioridade:
 | 2 | Phase 1 | Core domain MVP e API | P0 | L | MEDIUM | `IMPLEMENTED` | Phase 0 |
 | 3 | Phase 2 | Primeiro adapter de provider (AbacatePay) | P0 | M | MEDIUM | `IMPLEMENTED` (Slice 2-A CONCLUIDO 2026-06-27; Slice 2-B CONCLUIDO 2026-06-29) | Phase 1 |
 | 4 | Phase 3 | Webhooks externos e internos | P0 | M | MEDIUM | `IMPLEMENTING` (Slice 7-A CONCLUIDO 2026-06-26; Slice 2-B CONCLUIDO 2026-06-29 completa webhooks externos AbacatePay) | Phase 1 |
-| 5 | Phase 7 | Workers, Outbox e processamento assincrono | P1 | M | MEDIUM | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-26; base de integracao entregue 2026-06-26 via Slice 1-IT; suite E2E do dispatcher entregue 2026-06-30 via Slice 7-IT) | Phase 3, Phase 6 |
+| 5 | Phase 7 | Workers, Outbox e processamento assincrono | P1 | M | MEDIUM | `IMPLEMENTED` (0 gaps P1 proprios desde 2026-06-26; base de integracao entregue 2026-06-26 via Slice 1-IT; suite E2E do dispatcher entregue 2026-06-30 via Slice 7-IT; multi-instancia + sweep de Processing orfao entregue 2026-06-30 via Slice 7-M1; cobertura E2E total = 498 testes) | Phase 3, Phase 6 |
 | 6 | Phase 6 | Seguranca e confiabilidade | P1 | M | HIGH | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-25) | Phase 1 |
 | 7 | Phase 4 | Multi-provider (Stripe + MercadoPago) | P1 | L | MEDIUM | `SPEC_DRAFTED` | Phase 2, Phase 3 |
 | 8 | Phase 9 | Relatorios, metricas e observabilidade | P2 | L | LOW | `SPEC_DRAFTED` | Phase 6, Phase 7 |
@@ -101,11 +101,11 @@ Com base na execucao do Bloco A ate 2026-06-26, os 5 gaps P1 da auditoria de 202
 | P1-4 | Worker dedicado de outbox usa `NoopApplicationWebhookDispatcher` | 3, 7 | 7-A | 2026-06-26 |
 | P1-5 | `ApplicationClient.WebhookSecret` persistido em texto claro | 6 | 6-C | 2026-06-25 |
 
-Phase 6 e Phase 7 alcancaram 0 gaps P1 proprios em 2026-06-25 e 2026-06-26, respectivamente. Bloco A esta fechado.
+Phase 6 e Phase 7 alcancaram 0 gaps P1 proprios em 2026-06-25 e 2026-06-26, respectivamente. Phase 7 foi promovida a `IMPLEMENTED` em 2026-06-30 apos a Slice 7-M1 fechar os 2 gaps P2 proprios remanescentes (`FOR UPDATE SKIP LOCKED` + sweep automatico de `Processing` orfao); Phase 6 continua `IMPLEMENTING` ate P2-3 (AuditLog em handlers administrativos) ser fechado. Bloco A esta fechado do ponto de vista de gaps P1; Phase 6 aguarda P2-3 para validacao.
 
 Phase 2 (Phase 2 — Primeiro adapter de provider) atinge seu primeiro marco de implementacao com o Slice 2-A em 2026-06-27. Detalhes em `docs/audits/slice-2a-abacatepay-sandbox-report-2026-06-26.md`. Webhooks externos completos (HMAC, normalizacao de eventos) seguem em **Slice 2-B** (a abrir), dependente apenas de decisao de produto entre Phase 2 e Phase 3.
 
-Slices de integracao end-to-end (middleware/checkout/workers com banco real) seguem dependentes de decisao entre Phase 2 e Phase 7. Slice 1-IT (base de testes de integracao com Postgres) foi concluido em 2026-06-26 e permanece verde apos Slice 2-A, Slice 3-IT, Slice 2-C e Slice 7-IT.
+Slices de integracao end-to-end (middleware/checkout/workers com banco real) seguem dependentes de decisao entre Phase 2 e Phase 7. Slice 1-IT (base de testes de integracao com Postgres) foi concluido em 2026-06-26 e permanece verde apos Slice 2-A, Slice 3-IT, Slice 2-C, Slice 7-IT e Slice 7-M1 (cobertura E2E total = 498 testes; ver `docs/roadmap/002-phase-status-board.md`).
 
 ## Status de slices recentes (2026-06-30)
 

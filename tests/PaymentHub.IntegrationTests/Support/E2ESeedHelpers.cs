@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Abstractions.Security;
 using PaymentHub.Domain.Entities;
@@ -120,6 +121,92 @@ public static class E2ESeedHelpers
         await uow.SaveChangesAsync(cancellationToken);
         return account;
     }
+
+    // ------------------------------------------------------------------
+    // Slice 7-M1.5 / 7-M1.6 — Outbox seed helpers for the multi-instance
+    // and orphan-sweep test classes. Bypass the IOutboxPublisher (which
+    // also writes a new ID) so tests can pin deterministic ids and pre-set
+    // the entity's Status / NextRetryAt / ProcessingStartedAt.
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Inserts a <see cref="Domain.Entities.OutboxEvent"/> with the supplied attributes,
+    /// bypassing <see cref="IOutboxPublisher"/> so the caller can stamp any
+    /// <see cref="Domain.Enums.OutboxEventStatus"/>, <c>NextRetryAt</c> or
+    /// <c>ProcessingStartedAt</c> value it needs. Returns the persisted <c>Id</c> so
+    /// tests can re-read the row through a fresh <see cref="PaymentHubDbContext"/>.
+    /// </summary>
+    public static async Task<Guid> SeedOutboxEventAsync(
+        PaymentHub.IntegrationTests.Infrastructure.PaymentHubApiFactory factory,
+        E2ECredentials credentials,
+        string eventType = "payment.status.changed",
+        object? payload = null,
+        Domain.Enums.OutboxEventStatus status = Domain.Enums.OutboxEventStatus.Pending,
+        DateTime? nextRetryAt = null,
+        DateTime? processingStartedAt = null,
+        Guid? id = null,
+        CancellationToken cancellationToken = default)
+    {
+        var outboxId = id ?? Guid.NewGuid();
+        var ev = new Domain.Entities.OutboxEvent(
+            outboxId,
+            credentials.TenantId,
+            credentials.ApplicationId,
+            eventType,
+            System.Text.Json.JsonSerializer.Serialize(payload ?? new { test = "7m1" }));
+
+        // Stamp the persisted fields directly because the entity ctor leaves them at default.
+        // We use the clock-injected MarkProcessing / MarkRetry variants so the invariant
+        // (Status + ProcessingStartedAt / NextRetryAt consistency) is preserved exactly the
+        // way the production code maintains it.
+        switch (status)
+        {
+            case Domain.Enums.OutboxEventStatus.Pending:
+                if (nextRetryAt.HasValue)
+                {
+                    ev.MarkRetryWithCategory(
+                        Domain.Enums.WebhookDispatcherCategory.NetworkError, nextRetryAt.Value);
+                }
+                break;
+            case Domain.Enums.OutboxEventStatus.Processing:
+                ev.MarkProcessing(processingStartedAt ?? DateTime.UtcNow);
+                break;
+            case Domain.Enums.OutboxEventStatus.Sent:
+                ev.MarkSent();
+                break;
+            case Domain.Enums.OutboxEventStatus.Failed:
+                ev.MarkFailedWithStatus(Domain.Enums.WebhookDispatcherCategory.HttpFailure, 500);
+                break;
+        }
+
+        using var scope = factory.Services.CreateScope();
+        var repos = scope.ServiceProvider.GetRequiredService<IOutboxRepository>();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        await repos.AddAsync(ev, cancellationToken);
+        await uow.SaveChangesAsync(cancellationToken);
+        return outboxId;
+    }
+
+    /// <summary>
+    /// Convenience: seeds an event already in <c>Processing</c> with a specific
+    /// <c>ProcessingStartedAt</c>. Used by the orphan-sweep test class to simulate
+    /// "previous worker died mid-dispatch" without touching real persistence from a
+    /// a real dispatcher run.
+    /// </summary>
+    public static Task<Guid> SeedProcessingOutboxEventAsync(
+        PaymentHub.IntegrationTests.Infrastructure.PaymentHubApiFactory factory,
+        E2ECredentials credentials,
+        DateTime processingStartedAt,
+        string eventType = "payment.status.changed",
+        object? payload = null,
+        Guid? id = null,
+        CancellationToken cancellationToken = default)
+        => SeedOutboxEventAsync(
+            factory, credentials, eventType, payload,
+            status: Domain.Enums.OutboxEventStatus.Processing,
+            processingStartedAt: processingStartedAt,
+            id: id,
+            cancellationToken: cancellationToken);
 }
 
 /// <summary>

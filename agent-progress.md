@@ -47,92 +47,76 @@ Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e v
 - Docs atualizadas: `docs/specs/006`, `008`, `009`, `011`; `docs/harness/validation.md` (Phase 2 Slice 2-C block); `docs/harness/learnings.md` (entrada 2026-06-30 com 5 padroes reutilizaveis); `docs/audits/slice-2c-abacatepay-webhook-management-report-2026-06-30.md` (audit report).
 - Commit + push pendentes (nao foram feitos nesta sessao; usuario deve pedir explicitamente).
 
+### 2026-06-30 - Slice 7-IT fechado (OutboxDispatcherWorker E2E ate ApplicationClient webhook)
+
+- Data: 2026-06-30
+- Agente/superficie: OpenCode (Implementer)
+- Sub-slices entregues (single-slice, 7 testes P1+P2):
+  - **7-IT.1** — `InternalsVisibleTo("PaymentHub.IntegrationTests")` adicionado a `src/PaymentHub.Worker/PaymentHub.Worker.csproj` para expor `OutboxDispatcherWorker.DispatchOnceAsync` (metodo `internal`) ao projeto de E2E.
+  - **7-IT.2** — `ApplicationWebhookCaptureHandler` evoluido sem quebrar Slice 3-IT: `CapturedRequest` agora expoe `EventIdHeader` + `EventTypeHeader` alem dos pre-existentes `SignatureHeader`/`TimestampHeader`/`Body`; novo `EnqueueResponse(HttpStatusCode, reasonPhrase)` (fila FIFO) para exercitar 5xx/4xx sem chamada externa real; default 204 quando fila vazia; `InternalWebhookHmac.Compute/Matches` adicionado como `public static`.
+  - **7-IT.3** — `PaymentHubApiFactory.ProtectWebhookSecret(string)` adicionado: E2E protege o segredo com o `IWebhookSecretProtector` real da API.
+  - **7-IT.4** — `PaymentHub.IntegrationTests.csproj` ganha `ProjectReference` para `PaymentHub.Worker.csproj` + bump `Microsoft.Extensions.DependencyInjection`/`Logging`/`Options` de `10.0.0` para `10.0.9`.
+  - **7-IT.5** — `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs` criado com 7 testes: P1.1 (happy path Sent), P1.2 (HMAC valido), P1.3 (500 retry), P1.4 (429 retry), P1.5 (UnprotectFailure sem HTTP POST), P2.1 (fluxo AbacatePay completo), P2.2 (no-redispatch de Sent).
+  - **7-IT.6** — Documentacao final: validation.md, spec 007, spec 011, learnings.md, feature_list.md, roadmap 001/002, audit report.
+- Validacao final: 491 passed (~15s); 24 integration (17 baseline + 7 Slice 7-IT); scripts verdes.
+- Files tocados: 13 (producao + testes + docs).
+- Phase 7 mantem `IMPLEMENTING` (multi-instancia e sweep diferidos para Slice 7-M1).
+
+### 2026-06-30 - Slice 7-M1 fechado (Outbox multi-instancia: SKIP LOCKED + sweep fecha Phase 7)
+
+- Data: 2026-06-30
+- Agente/superficie: OpenCode (Implementer)
+- Sub-slices entregues (7 sub-slices):
+  - **7-M1.1** — Domain: `OutboxEvent.ProcessingStartedAt` (`timestamptz NULL`) + `MarkProcessing(DateTime now)` overload (back-compat com parameterless) + `RequeueOrphaned(now, nextRetryAt)`; `WebhookDispatcherCategory.ProcessingOrphaned = 8`. EF mapping: coluna nova + `(status, next_retry_at, created_at)` index + partial `(status, processing_started_at) WHERE status='Processing'`. Migration `20260630184619_AddOutboxProcessingStartedAtAndIndexes` (sem tocar `payload`/`raw_payload`/`webhook_events`).
+  - **7-M1.2** — `IOutboxRepository.ClaimPendingForDispatchAsync(int batchSize, DateTime now, ct)` + `SweepOrphanedProcessingAsync(DateTime cutoff, ct)`. `OutboxRepository` usa `Database.GetDbConnection()` + `BeginTransactionAsync(ReadCommitted)` + `NpgsqlCommand` raw com `SELECT ... FOR UPDATE SKIP LOCKED LIMIT @batchSize` seguido de `UPDATE status='Processing', processing_started_at=@now WHERE id = ANY(@claimedIds)` em uma unica transacao. AsNoTracking reload apos commit. Sweep via `ExecuteSqlRawAsync` UPDATE atomic persistindo literal `'ProcessingOrphaned'` em `last_error` e `next_retry_at = NULL` (NAO `@now`) para re-dispatch imediato.
+  - **7-M1.3** — Worker: `OutboxDispatcherWorker.DispatchOnceAsync` consome `ClaimPendingForDispatchAsync(batch, _clock.UtcNow, ct)`, removed separate `outbox.MarkProcessing()` + `eventStore.SaveAsync()` (claim ja entrega Processing). Adicionado sanity-check anti-regressao: se claim devolve row em estado invalido, loga `Error` e pula o dispatch. Test migration em `OutboxDispatcherWorkerTests.cs` (13 mock setups + 3 SaveAsync count assertions + 4 re-stamps + 1 callback) + `OutboxPendingQueryTests.cs` (call site + assertions de post-claim).
+  - **7-M1.4** — `PaymentHubOptions.OutboxProcessingTimeoutSeconds = 900` (configuravel). Worker chama sweep ANTES do claim em toda iteracao.
+  - **7-M1.5** — `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherConcurrencyTests.cs` (novo, 2 testes): P1.1 (2 workers concorrentes, 1 evento, `CallCount == 1`); P1.2 (10 eventos, 3 workers, 5 iteracoes cada, `CallCount == 10`).
+  - **7-M1.6** — `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxProcessingSweepTests.cs` (novo, 5 testes): P1.3 (requeue de Processing de 2h atras via sweep + claim na mesma iteracao); P1.4 (Processing de 1s atras preservado); P1.5 (Sent/Failed nao reabertos); P2.1 (NextRetryAt futuro respeitado); P2.2 (batch=3 respeitado em 10 eventos). Helpers adicionados em `E2ESeedHelpers.cs`: `SeedOutboxEventAsync(...)` (bypassa `IOutboxPublisher` para stamp custom Status/NextRetryAt/ProcessingStartedAt) + `SeedProcessingOutboxEventAsync(...)` (P1.3).
+  - **7-M1.7** — Docs: `docs/specs/007-inbox-outbox-workers.md` (secao "Multi-instancia" + dispatcher category 8); `docs/specs/011-security-and-compliance.md` (secao "Slice 7-M1" + enforcement rules); `docs/harness/validation.md` (bloco Slice-specific Phase 7 / Slice 7-M1 com 13 MUST-NOT-REGRESS); `docs/harness/learnings.md` (entrada 2026-06-30 com pattern claim + sweep + concurrency); `feature_list.md` (`PH-OUTBOX-MULTI-INSTANCE → Concluido`); `docs/roadmap/001-development-timeline.md` (Phase 7 → IMPLEMENTED); `docs/roadmap/002-phase-status-board.md` (dashboard row IMPLEMENTED + nota 4 + M1-security/C.3-qa → RESOLVIDO + Bloco A → CONCLUIDO 2026-06-30 + Testes integracao 31 + Gaps P2 6→4); `docs/audits/slice-7-m1-outbox-multi-instance-report-2026-06-30.md` (novo, 9 Q&A + cobertura + arquivos + validacao + anti-regression rules + impacto para proximos agentes).
+- Decisoes chave:
+  - **Claim transacional com `FOR UPDATE SKIP LOCKED`** (EF Core 10 nao traduz em LINQ; raw `NpgsqlConnection` obrigatorio). Atomico: SELECT + UPDATE dentro de `BeginTransactionAsync(ReadCommitted)`. Outras instancias recebem `SKIP LOCKED` para rows ja bloqueadas e pegam outras disponiveis.
+  - **Worker NAO chama `MarkProcessing` separado.** O claim ja entrega rows em `Processing` com `ProcessingStartedAt` stampado. Sanity-check no Worker protege contra regressao futura.
+  - **`next_retry_at = NULL` no sweep** (NAO `@now`) para re-dispatch imediato na mesma iteracao. Se gravarmos `@now`, a comparacao `next_retry_at <= @now` no claim poderia falhar por microsegundos.
+  - **`last_error = 'ProcessingOrphaned'` literal** hardcoded no template SQL do sweep. Nunca `ex.Message`, URL, blob, stack. Mesma politica do Slice 7-A.7 aplicada ao caminho de recovery.
+  - **`OutboxEvent.ProcessingStartedAt` e' `timestamptz NULL`, NAO `jsonb`.** Limpo em toda saida de `Processing` (`MarkSent`, `MarkRetryWith*`, `MarkFailedWith*`, `RequeueOrphaned`).
+- Validacao final:
+  - `dotnet build PaymentHub.slnx` → 0 errors / 0 warnings (9 projetos).
+  - `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~OutboxDispatcher"` → 17 passing (15 baseline migrados + 2 novos? Actually: 17 already-existing baseline + 0= 17 migrated, all green).
+  - `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~OutboxDispatcherConcurrency"` → 2 passing (P1.1 + P1.2).
+  - `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~OutboxProcessingSweep"` → 5 passing (P1.3 + P1.4 + P1.5 + P2.1 + P2.2).
+  - `dotnet test PaymentHub.slnx --filter "FullyQualifiedName~EndToEnd"` → 14 passing (7 Slice 7-IT + 2 Slice 7-M1 concurrency + 5 Slice 7-M1 sweep).
+  - `dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj` → 31 passed (24 Slice 1-IT/3-IT/2-C/7-IT baseline + 2 Slice 7-M1 concurrency + 5 Slice 7-M1 sweep).
+  - `dotnet test PaymentHub.slnx` → 467 unit + 31 integration = **498 passed**.
+- Suite previa: 491 testes (apos Slice 7-IT). Suite nova: **498 testes** (+7).
+- Phase 7 alcancou `IMPLEMENTED` em 2026-06-30 (gaps P2 proprios M1-security + C.3-qa agora RESOLVIDO). Phase 6 continua `IMPLEMENTING` ate P2-3 (audit log em handlers administrativos) ser fechado.
+- Anti-regression rules aplicadas (todas MUST-NOT-REGRESS em `docs/harness/validation.md`):
+  - `webhook_events.raw_payload` permanece `text` (Slice 3-IT BLOCKER).
+  - `provider_accounts.webhook_events` permanece `text` (Slice 2-C BLOCKER).
+  - `outbox_events.payload` permanece `jsonb` (Slice 7-IT decision, NOT a regression).
+  - `outbox_events.processing_started_at` permanece `timestamptz NULL`, NOT `jsonb`.
+  - `LastError` permanece categoria enum ou `"HttpFailure: status={code}"` only; sweep adiciona `"ProcessingOrphaned"` (enum value).
+  - `OutboxDispatcherWorker.DispatchOnceAsync` permanece `internal` com `InternalsVisibleTo("PaymentHub.IntegrationTests")`.
+  - `OutboxDispatcherWorker` NAO e' hospedado dentro de `WebApplicationFactory` (decisao Slice 3-IT + 7-IT + 7-M1).
+  - `ApplicationWebhookCaptureHandler` default permanece `204 NoContent` quando a fila de respostas esta vazia.
+- Impacto para proximos agentes (5 patterns reutilizaveis):
+  - **Para implementar outbox-like em Postgres** (retry queue, scheduled job queue, fanout): interface `I<Domain>Repository` com `<Verb>` que retorna `IReadOnlyList<T>` (claim) + `Sweep<State>` (recovery); implementacao com raw `NpgsqlConnection` + `BeginTransactionAsync` + `SELECT ... FOR UPDATE SKIP LOCKED LIMIT @batchSize` + atomic UPDATE; entidade com `ProcessingStartedAt` (timestamp nullable) + `MarkProcessing(DateTime now)`; Worker com sanity-check no claim.
+  - **Para sweep automatico de qualquer estado transitorio** (Recovery, RetryOrphaned, etc): usar `ExecuteSqlRawAsync` com parametros nomeados (NAO `ExecuteSqlInterpolated`); template SQL estavel para `EXPLAIN`; `last_error` recebe apenas literal hardcoded da categoria (`'ProcessingOrphaned'`) — nunca `ex.Message`.
+  - **Para testes de concorrencia E2E**: `Task.WhenAll` com workers instanciados via `factory.Services.GetRequiredService<>()`; cada worker usa seu proprio `IServiceScope` + DbContext (EF Core nao e' thread-safe; compartilhar mascara bugs reais). Anti-flaky: `await Task.Delay(10)` entre os `DispatchOnceAsync`.
+  - **Ao adicionar coluna de timestamp**: usar `timestamptz NULL`, NAO `jsonb`. Timestamp e' numero, JSON e' documento.
+  - **Workaround para `EF Core` + `SKIP LOCKED`**: raw `NpgsqlConnection` e' o unico caminho. EF Core 10 nao traduz em LINQ.
+- Files tocados (16 totais):
+  - Producao: `OutboxEvent.cs`, `WebhookDispatcherCategory.cs`, `IOutboxPublisher.cs`, `Repositories.cs`, `EntityConfigurations.cs`, `PaymentHubOptions.cs`, `OutboxDispatcherWorker.cs`, migration `20260630184619_AddOutboxProcessingStartedAtAndIndexes.cs` (+ designer).
+  - Tests: `OutboxDispatcherWorkerTests.cs` (migrado), `OutboxPendingQueryTests.cs` (migrado), `E2ESeedHelpers.cs` (helpers novos), `OutboxDispatcherConcurrencyTests.cs` (novo), `OutboxProcessingSweepTests.cs` (novo).
+  - Docs: `007-inbox-outbox-workers.md`, `011-security-and-compliance.md`, `validation.md`, `learnings.md`, `feature_list.md`, `001-development-timeline.md`, `002-phase-status-board.md`, `slice-7-m1-outbox-multi-instance-report-2026-06-30.md` (novo).
+- Commit + push pendentes (nao foram feitos nesta sessao; usuario deve pedir explicitamente).
+
 ## Entrada atual
 
-### Slice 7-IT — OutboxDispatcherWorker E2E com ApplicationClient webhook fake
+### Slice 2-C.1 — Cliente HTTP real para `IProviderWebhookManagementClient` (call `POST /v2/webhooks/create` na AbacatePay)
 
-Status: CONCLUIDO 2026-06-30
+Status: PLANEJADO PARA PROXIMA SESSAO
 
-Sub-slices concluidos (single-slice, 7 testes P1+P2):
-
-- **7-IT.1** — `InternalsVisibleTo("PaymentHub.IntegrationTests")` adicionado a `src/PaymentHub.Worker/PaymentHub.Worker.csproj` para expor `OutboxDispatcherWorker.DispatchOnceAsync` (metodo `internal`) ao projeto de E2E. Mudanca minima de uma linha, sem impacto no codigo de producao.
-- **7-IT.2** — `ApplicationWebhookCaptureHandler` evoluido sem quebrar Slice 3-IT: `CapturedRequest` agora expoe `EventIdHeader` + `EventTypeHeader` alem dos pre-existentes `SignatureHeader`/`TimestampHeader`/`Body`; novo `EnqueueResponse(HttpStatusCode, reasonPhrase)` (fila FIFO) para exercitar 5xx/4xx sem chamada externa real; default 204 quando fila vazia (preserva `Captured.Should().BeEmpty()` em `AbacatePayCheckoutE2ETests`); novo `Reset()` para casos futuros. `InternalWebhookHmac.Compute/Matches` adicionado como `public static` no mesmo arquivo, recomputa `sha256_hex_lowercase(secret, "{ts}.{body}")` para os asserts.
-- **7-IT.3** — `PaymentHubApiFactory.ProtectWebhookSecret(string)` adicionado: E2E protege o segredo com o `IWebhookSecretProtector` real da API (mesma chave deterministica que `IntegrationTestFactory`).
-- **7-IT.4** — `PaymentHub.IntegrationTests.csproj` ganha `ProjectReference` para `PaymentHub.Worker.csproj` + bump `Microsoft.Extensions.DependencyInjection`/`Logging`/`Options` de `10.0.0` para `10.0.9` (necessario por `Microsoft.Extensions.Hosting 10.0.9` transitivo do Worker SDK package — `NU1605` package downgrade).
-- **7-IT.5** — `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs` criado com 7 testes:
-  - P1.1: `OutboxDispatcher_ShouldSendPendingEvent_ToApplicationClientWebhook_AndMarkSent` (happy path)
-  - P1.2: `OutboxDispatcher_ShouldSignInternalWebhook_WithApplicationClientSecret` (HMAC valido; tamper em body OU timestamp invalida; 64 chars hex lowercase)
-  - P1.3: `OutboxDispatcher_ShouldMarkRetry_WhenApplicationWebhookReturnsServerError` (500 → `LastError = "HttpFailure: status=500"`, sem leak)
-  - P1.4: `OutboxDispatcher_ShouldMarkRetry_WhenApplicationWebhookReturnsRateLimited` (429 → `LastError = "HttpFailure: status=429"`)
-  - P1.5: `OutboxDispatcher_ShouldFailSafely_WhenWebhookSecretCannotBeUnprotected` (blob invalido → `UnprotectFailure`, `CallCount == 0`, sem HTTP POST)
-  - P2.1: `AbacatePayWebhookFlow_ShouldCreateOutbox_AndDispatchInternalWebhook` (checkout + webhook externo + processor + dispatcher; ambos outbox `Sent`, HMAC interno valido contra `ApplicationClient.WebhookSecret`, payload outbound NAO contem provider secret)
-  - P2.2: `OutboxDispatcher_ShouldNotDispatchAlreadySentEvent` (segunda iteracao do dispatcher e no-op para `Sent`)
-- **7-IT.6** — Documentacao final: `docs/harness/validation.md` (bloco Phase 7 Slice 7-IT com 11 regras MUST-NOT-REGRESS), `docs/specs/007-inbox-outbox-workers.md` (secao "End-to-end integration tests (Slice 7-IT)"), `docs/specs/011-security-and-compliance.md` (sub-secao "Slice 7-IT — End-to-end dispatcher (2026-06-30)"), `docs/harness/learnings.md` (entrada nova com 5 recomendacoes reaproveitaveis), `feature_list.md` (PH-OUTBOX-E2E → Concluido), `docs/roadmap/001-development-timeline.md` (Phase 7 status + slices recentes + Slice 2-C + 7-IT lines), `docs/roadmap/002-phase-status-board.md` (Phase 7 row + P2-2 row + Bloco B + indicadores 467/24/6), `docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md` (audit report completo, 7 Q&A, cobertura, arquivos, validacao, anti-regression rules).
-
-Validacao final (2026-06-30):
-
-- `dotnet build PaymentHub.slnx` → 0 errors / 0 warnings (9 projetos).
-- `dotnet test PaymentHub.slnx` → 491 passed, 0 warnings (~15s).
-- `dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj` → 24 passed (17 baseline + 7 Slice 7-IT), ~14s.
-- `dotnet test --filter "~OutboxDispatcher"` → 7 passed.
-- `dotnet test --filter "~EndToEnd"` → 11 passed (4 Slice 3-IT + 7 Slice 7-IT).
-- `dotnet test --filter "~Outbox"`, `"~Webhook"`, `"~AbacatePay"` → sem regressao.
-- `scripts/agent-architecture-check.sh` → Architecture check passed.
-- `scripts/agent-docs-check.sh` → Docs check passed.
-- `git diff --check` → limpo.
-
-Arquivos tocados (13):
-
-- `src/PaymentHub.Worker/PaymentHub.Worker.csproj` (+3: `InternalsVisibleTo("PaymentHub.IntegrationTests")` + comentario).
-- `tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj` (+6 + bump 3 packages 10.0.0 → 10.0.9).
-- `tests/PaymentHub.IntegrationTests/Infrastructure/PaymentHubApiFactory.cs` (+20: `ProtectWebhookSecret`).
-- `tests/PaymentHub.IntegrationTests/Support/ApplicationWebhookCaptureHandler.cs` (refactor: `CapturedRequest` +2 headers, `EnqueueResponse`, `Reset`, `InternalWebhookHmac` static class).
-- `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs` (novo, 713 linhas, 7 testes + helpers).
-- `docs/harness/validation.md` (+40: bloco `Slice-specific (Phase 7 / Slice 7-IT)`).
-- `docs/specs/007-inbox-outbox-workers.md` (+50: secao E2E + gaps + arquivos relacionados).
-- `docs/specs/011-security-and-compliance.md` (+30: sub-secao `Slice 7-IT — End-to-end dispatcher (2026-06-30)`).
-- `docs/harness/learnings.md` (+30: entrada nova no topo).
-- `feature_list.md` (+1: `PH-OUTBOX-E2E` → Concluido).
-- `docs/roadmap/001-development-timeline.md` (Phase 7 status + slices recentes table + Slice 2-C + 7-IT lines).
-- `docs/roadmap/002-phase-status-board.md` (Phase 7 row, P2-2 row, Bloco B, indicadores 467/24/6, arquivos relacionados).
-- `docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md` (novo, audit report completo).
-
-Riscos residuais / fora-de-escopo:
-
-- **Multi-instancia** (`FOR UPDATE SKIP LOCKED`, sweep de `Processing` orfao, dispatch idempotente em multiplos Workers): **NAO** enderecado nesta slice. Deferido para `Slice 7-M1` (Phase 7 multi-instancia), ja documentado em `docs/roadmap/002-phase-status-board.md` (gaps M1-security e C.3-qa).
-- **Backpressure**: o worker continua processando ate `OutboxWorkerBatchSize` (default 50) por tick; rate limit aplicado pelo consumer via 429 (P1.4).
-- **Migracoes**: zero novas. Storage ja cobre tudo (`outbox_events.payload` continua `jsonb` propositalmente).
-- **Outbox de Outbox**: se um dispatch falhar 5 vezes seguidas, vai para `Failed` (sem nova tentativa). Operacao manual futura; fora do escopo do MVP.
-
-Decisoes chave (resumo):
-
-- (Q1) `OutboxDispatcherWorker` continua NAO hospedado dentro do `WebApplicationFactory` (decisao herdada da Slice 3-IT). E2E invoca `DispatchOnceAsync` manualmente via `factory.Services` (resolve `IServiceScopeFactory` + `IClock` + `ILoggerFactory` + `IOptions<PaymentHubOptions>`).
-- (Q2) `HttpClient "application-webhook"` continua re-registrado com `ApplicationWebhookCaptureHandler` em `ConfigureTestServices` (mesmo pattern da Slice 3-IT; ultimo `PrimaryHandler` ganha).
-- (Q3) `EnqueueResponse` (fila FIFO) para 5xx/4xx; default 204 quando vazia (preserva `Captured.Should().BeEmpty()` em `AbacatePayCheckoutE2ETests`).
-- (Q4) `InternalWebhookHmac.Compute/Matches` evita duplicar a regra de negocio em cada teste; tamper em body OU timestamp invalida.
-- (Q5) `CapturedRequest` carrega **TODOS** os 4 headers `X-PaymentHub-*` (event-id, event-type, timestamp, signature) alem do body raw.
-- (Q6) `UnprotectFailure` reproduzido com blob base64 lixo em `protectedWebhookSecret` (sem depender de divergencia de chave entre API e Worker).
-- (Q7) P2.1 cobre todo o fluxo AbacatePay ate delivery interno; prova que nao ha gap entre Inbox e Outbox em producao.
-
-Anti-Regression Rules (11 regras MUST-NOT-REGRESS em `docs/harness/validation.md`):
-
-1. NAO hospedar `OutboxDispatcherWorker`/`WebhookProcessorWorker` no `WebApplicationFactory`.
-2. NAO remover `InternalsVisibleTo("PaymentHub.IntegrationTests")` de `PaymentHub.Worker.csproj`.
-3. NAO trocar `CreateHost(IHostBuilder)` override em `PaymentHubApiFactory` por apenas `ConfigureWebHost(IWebHostBuilder)`.
-4. NAO alterar o default `204 NoContent` do `ApplicationWebhookCaptureHandler` (quebra Slice 3-IT).
-5. NAO copiar a logica `sha256_hex_lowercase(secret, "{ts}.{body}")` em cada teste — sempre usar `InternalWebhookHmac.Compute/Matches`.
-6. NAO persistir URL, segredo, blob protegido, signature ou body da response em `LastError`.
-7. NAO trocar `OutboxEvent.payload` para `text` (continua `jsonb` propositalmente; `text` e' regra apenas para colunas com HMAC byte preservation).
-8. NAO chamar `DispatchAsync` sem o `Unprotect` passar (Invariant: `UnprotectFailure` aborta ANTES de qualquer HTTP POST).
-9. NAO reenviar eventos `Sent`/`Processing`/`Failed` no worker (P2.2 cobre isso).
-10. NAO exigir `tenantId`/`applicationId` em DTOs de request quando o endpoint for autenticado (herdado da Slice 6-B).
-11. NAO criar migration para esta slice (storage ja existe; mudancas ficam para Phase 7 multi-instancia).
-
-Proximo slice recomendado:
-
-- **Slice 2-C.1** — Cliente HTTP real para `IProviderWebhookManagementClient` (call `POST /v2/webhooks/create` na AbacatePay). Substitui o `NoOpProviderWebhookManagementClient` (registra `RemoteRegistrationDeferred`) por um client real com `HttpClient` nomeado, Bearer Token via `ICredentialProtector.Unprotect`, e `AbacatePayErrorCategory`-based envelope error handling. Ja planejado nesta session.
-- Alternativamente, **Slice 7-M1** (Phase 7 multi-instancia: `FOR UPDATE SKIP LOCKED` + sweep de `Processing` orfao) fecha os gaps M1-security + C.3-qa e promove Phase 7 de `IMPLEMENTING` para `IMPLEMENTED`.
-- O Slice 6 (seguranca) ainda tem o gap P2-3 (AuditLog em handlers administrativos), que tambem pode ser enderecado agora.
 
 ### Slice 2-C.1 — Cliente HTTP real para `IProviderWebhookManagementClient` (call `POST /v2/webhooks/create` na AbacatePay)
 

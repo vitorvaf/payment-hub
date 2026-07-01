@@ -14,6 +14,17 @@ public class OutboxEvent
     public string? LastError { get; private set; }
     public DateTime? SentAt { get; private set; }
     public DateTime? NextRetryAt { get; private set; }
+
+    /// <summary>
+    /// Slice 7-M1: timestamp the row transitioned to <see cref="OutboxEventStatus.Processing"/>.
+    /// Used by the orphan sweep (<c>SweepOrphanedProcessingAsync</c>) to detect rows stuck in
+    /// <c>Processing</c> after a worker crash. Cleared whenever the row leaves <c>Processing</c>
+    /// (<see cref="MarkSent"/>, <see cref="MarkRetryWithCategory"/>, <see cref="MarkRetryWithStatus"/>,
+    /// <see cref="MarkFailedWithCategory"/>, <see cref="MarkFailedWithStatus"/>,
+    /// <see cref="RequeueOrphaned"/>).
+    /// </summary>
+    public DateTime? ProcessingStartedAt { get; private set; }
+
     public DateTime CreatedAt { get; private set; }
     public DateTime UpdatedAt { get; private set; }
 
@@ -44,10 +55,24 @@ public class OutboxEvent
         UpdatedAt = CreatedAt;
     }
 
-    public void MarkProcessing()
+    /// <summary>
+    /// Transitions the row to <see cref="OutboxEventStatus.Processing"/> and stamps
+    /// <see cref="ProcessingStartedAt"/>. Slice 7-M1 makes the method IClock-aware so the
+    /// orphan sweep can be exercised deterministically in tests; the parameterless overload
+    /// is preserved for backwards compatibility with hand-rolled transitions in unit tests.
+    /// </summary>
+    public void MarkProcessing() => MarkProcessing(DateTime.UtcNow);
+
+    /// <summary>
+    /// Slice 7-M1: clock-injected variant of <see cref="MarkProcessing"/>. Production callers
+    /// (<c>ClaimPendingForDispatchAsync</c>) pass the same <c>now</c> they use for the
+    /// transactional UPDATE so the stamp matches the persisted value exactly.
+    /// </summary>
+    public void MarkProcessing(DateTime now)
     {
         Status = OutboxEventStatus.Processing;
-        UpdatedAt = DateTime.UtcNow;
+        ProcessingStartedAt = now;
+        UpdatedAt = now;
     }
 
     public void MarkSent()
@@ -56,6 +81,7 @@ public class OutboxEvent
         SentAt = DateTime.UtcNow;
         NextRetryAt = null;
         LastError = null;
+        ProcessingStartedAt = null;
         UpdatedAt = DateTime.UtcNow;
     }
 
@@ -72,6 +98,7 @@ public class OutboxEvent
         RetryCount += 1;
         LastError = Truncate(error, 2000);
         NextRetryAt = nextRetryAt;
+        ProcessingStartedAt = null;
         UpdatedAt = DateTime.UtcNow;
     }
 
@@ -85,6 +112,7 @@ public class OutboxEvent
         RetryCount += 1;
         LastError = Truncate(error, 2000);
         NextRetryAt = null;
+        ProcessingStartedAt = null;
         UpdatedAt = DateTime.UtcNow;
     }
 
@@ -101,6 +129,7 @@ public class OutboxEvent
         RetryCount += 1;
         LastError = category.ToString();
         NextRetryAt = nextRetryAt;
+        ProcessingStartedAt = null;
         UpdatedAt = DateTime.UtcNow;
     }
 
@@ -115,6 +144,7 @@ public class OutboxEvent
         RetryCount += 1;
         LastError = FormatStatusError(category, statusCode);
         NextRetryAt = nextRetryAt;
+        ProcessingStartedAt = null;
         UpdatedAt = DateTime.UtcNow;
     }
 
@@ -127,6 +157,7 @@ public class OutboxEvent
         RetryCount += 1;
         LastError = category.ToString();
         NextRetryAt = null;
+        ProcessingStartedAt = null;
         UpdatedAt = DateTime.UtcNow;
     }
 
@@ -139,7 +170,25 @@ public class OutboxEvent
         RetryCount += 1;
         LastError = FormatStatusError(category, statusCode);
         NextRetryAt = null;
+        ProcessingStartedAt = null;
         UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Slice 7-M1: orphan-sweep transition. Moves a stuck <c>Processing</c> row back to
+    /// <c>Pending</c> so the next dispatch iteration can re-claim it. Persists the safe
+    /// <see cref="WebhookDispatcherCategory.ProcessingOrphaned"/> category string to
+    /// <c>LastError</c> (never the original exception, URL, body or signature). Increments
+    /// <see cref="RetryCount"/> so the existing retry policy bounds total attempts.
+    /// </summary>
+    public void RequeueOrphaned(DateTime now, DateTime nextRetryAt)
+    {
+        Status = OutboxEventStatus.Pending;
+        RetryCount += 1;
+        LastError = WebhookDispatcherCategory.ProcessingOrphaned.ToString();
+        NextRetryAt = nextRetryAt;
+        ProcessingStartedAt = null;
+        UpdatedAt = now;
     }
 
     private static string FormatStatusError(WebhookDispatcherCategory category, int statusCode)

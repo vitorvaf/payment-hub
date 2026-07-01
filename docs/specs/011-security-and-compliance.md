@@ -303,7 +303,7 @@ O Worker dispara webhooks internos para a `WebhookUrl` da `ApplicationClient` ap
 
 `OutboxEvent.LastError` armazena apenas:
 
-- `WebhookDispatcherCategory` (enum de 7 valores: `HttpFailure`, `NetworkError`, `Timeout`, `UnprotectFailure`, `MissingWebhookUrl`, `MissingWebhookSecret`, `UnexpectedDispatcherError`).
+- `WebhookDispatcherCategory` (enum de 8 valores: `HttpFailure`, `NetworkError`, `Timeout`, `UnprotectFailure`, `MissingWebhookUrl`, `MissingWebhookSecret`, `UnexpectedDispatcherError`, `ProcessingOrphaned`).
 - `int?` (HTTP status code, quando aplicavel).
 
 **Nao** armazena:
@@ -439,6 +439,62 @@ decisao de testabilidade da Slice 3-IT.
 - `src/PaymentHub.Infrastructure.Providers/AbacatePay/Webhooks/*`
 - `docs/audits/slice-2b-abacatepay-webhooks-report-2026-06-29.md`
 - `docs/audits/slice-2c-abacatepay-webhook-management-report-2026-06-30.md`
+- `docs/audits/slice-7-m1-outbox-multi-instance-report-2026-06-30.md`
+- `src/PaymentHub.Infrastructure.Postgres/Repositories/Repositories.cs` (claim + sweep)
+- `src/PaymentHub.Infrastructure.Postgres/Migrations/20260630184619_AddOutboxProcessingStartedAtAndIndexes.cs`
+- `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherConcurrencyTests.cs` (2 testes)
+- `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxProcessingSweepTests.cs` (5 testes)
+
+### Slice 7-M1 — Outbox multi-instancia e sweep de `Processing` orfao (2026-06-30)
+
+A Slice 7-M1 fecha os gaps `M1-security` (sweep automatico de eventos `Processing` orfaos) e `C.3-qa` (`FOR UPDATE SKIP LOCKED` em `OutboxRepository`) que estavam documentados como pendentes de Phase 7. As decisoes abaixo sao imperativas:
+
+#### Claim atomico com `FOR UPDATE SKIP LOCKED`
+
+`IOutboxRepository.ClaimPendingForDispatchAsync(int batchSize, DateTime now, CancellationToken)` substitui o antigo `GetPendingForDispatchAsync`. A implementacao roda `SELECT ... FOR UPDATE SKIP LOCKED LIMIT @batchSize` seguido de `UPDATE status='Processing', processing_started_at=@now` em uma unica transacao `ReadCommitted` no `NpgsqlConnection` raw (EF Core 10 nao traduz `SKIP LOCKED` em LINQ). O Worker NAO chama `MarkProcessing` separado: as rows ja voltam em `Processing` na mesma transacao.
+
+Implicacoes de seguranca:
+
+- **Sem double-dispatch:** dois workers concorrentes nunca pegam a mesma row. Testado por `OutboxDispatcherConcurrencyTests.ShouldNotDoubleDispatch_WhenTwoInstancesRunConcurrently`. Sem isso, o consumidor final receberia cada `payment.approved` duas vezes, podendo acionar logic de idempotencia fragil em produtos consumidores (ex.: Job Search creditar duas vezes o mesmo pedido).
+- **Sem cross-tenant access:** o claim preserva o `tenant_id`/`application_id` ja presente na row. O `HttpApplicationWebhookDispatcher` continua chamando `_apps.GetByTenantAndIdAsync(outboxEvent.TenantId, outboxEvent.ApplicationId, ct)` (tenant guard documentado acima). Nenhuma nova superficie cross-tenant e introduzida.
+- **Anti-regressao `processing_started_at`:** o Worker faz sanity check no claim (`Status == Processing && ProcessingStartedAt != null`) e pula rows em estado invalido com log `Error`. Isso protege contra uma regressao futura que remova o `UPDATE` do claim path.
+
+#### `OutboxEvent.ProcessingStartedAt`
+
+Nova coluna non-sensitive (`timestamp with time zone`, nullable). **NAO** contem dados sensiveis: e' apenas o instante UTC do claim. Seguro para log de operacao e auditoria. Limpa em toda saida de `Processing` (`MarkSent`, `MarkRetryWithCategory`, `MarkRetryWithStatus`, `MarkFailedWithCategory`, `MarkFailedWithStatus`, `RequeueOrphaned`).
+
+#### Sweep de `Processing` orfao
+
+`IOutboxRepository.SweepOrphanedProcessingAsync(DateTime cutoff, CancellationToken)` move rows com `processing_started_at < cutoff` de `Processing` para `Pending`. Um unico `UPDATE ... WHERE status='Processing' AND processing_started_at < @cutoff` (atomic, idempotente). `cutoff = _clock.UtcNow.AddSeconds(-PaymentHubOptions.OutboxProcessingTimeoutSeconds)` (default 900s).
+
+Implicacoes de seguranca:
+
+- **`last_error` recebe APENAS o literal `"ProcessingOrphaned"` (enum value).** Nunca o motivo original do crash, a URL, o segredo, o body, a stack trace. Esta politica e' identica a' aplicada pelo Worker (ver "LastError seguro" acima) e e' enforced pela query SQL: o literal `'ProcessingOrphaned'` e' hardcoded no template.
+- **`next_retry_at` recebe `NULL` (nao `@now`).** Garante que a row e' imediatamente re-disparavel na mesma iteracao. Se gravassemos `@now`, a comparacao `next_retry_at <= @now` no claim poderia falhar por microsegundos e atrasar a entrega em um tick. Decisao explicita para evitar double-tick no caminho orfao.
+- **`Sent`/`Failed` NUNCA sao reabertos.** O `WHERE status='Processing'` torna o sweep restrito a' estado transitorio. Testado por `OutboxProcessingSweepTests.OutboxSweep_ShouldNotReopenTerminalEvents`.
+- **Sweep NAO perturba workers ativos.** Cutoff e' `now - timeout`. Se o `processing_started_at` de uma row e' mais recente que o cutoff, o sweep ignora. Testado por `OutboxProcessingSweepTests.OutboxSweep_ShouldNotRequeueRecentProcessingEvents`.
+
+#### Anti-regression rules
+
+- `outbox_events.payload` permanece `jsonb` (decisao do Slice 7-IT, NAO regressao). A Slice 7-M1 NAO toca nesta coluna.
+- `webhook_events.raw_payload` permanece `text` (decisao do Slice 3-IT, NAO regressao).
+- `provider_accounts.webhook_events` permanece `text` (decisao do Slice 2-C, NAO regressao).
+- `outbox_events.processing_started_at` e' `timestamptz NULL`, NAO `jsonb`. Nao confunda: e' um timestamp, nao JSON.
+- A conexao do `NpgsqlConnection` usada pelo claim e' obtida via `_db.Database.GetDbConnection()` (EF Core owns the connection). NAO chamar `Dispose()` na conexao. O `connectionWasClosed` flag rastreia se a conexao ja estava aberta antes do claim.
+
+#### Cobertura E2E (498 testes)
+
+- `OutboxDispatcherE2ETests` (Slice 7-IT, 7 testes): dispatcher real, HMAC, retry, no-redispatch de Sent, fluxo AbacatePay.
+- `OutboxDispatcherConcurrencyTests` (Slice 7-M1, 2 testes): 2 workers concorrentes nao causam double-dispatch; 10 eventos distribuidos entre 3 workers preservam `CallCount == 10`.
+- `OutboxProcessingSweepTests` (Slice 7-M1, 5 testes): requeue de orfao, preservacao de Processing recente, nao-reabertura de terminais, respect a `NextRetryAt`, respect a `OutboxWorkerBatchSize`.
+
+#### Anti-patterns proibidos
+
+- **NAO** trocar `FOR UPDATE SKIP LOCKED` por `FOR UPDATE` puro. Sem `SKIP LOCKED`, workers concorrentes serializam em vez de pularem rows bloqueadas, anulando o ganho de concorrencia.
+- **NAO** mover o sweep para o mesmo `BeginTransactionAsync` do claim. Sao concerns separados (recovery de crash vs. claim de trabalho novo) e devem rodar em transacoes independentes para que o sweep nao bloqueie o claim path.
+- **NAO** usar `ExecuteSqlInterpolated` no sweep. Use `ExecuteSqlRawAsync` com parametros nomeados (`@now`, `@cutoff`) para evitar SQL injection e manter a query estavel para `EXPLAIN`.
+- **NAO** reintroduzir `MarkProcessing` separado no Worker. O claim ja entrega rows em `Processing`; voltar atras re-introduz o race window que esta slice fecha.
+- **NAO** persistir o motivo do crash (mensagem da exception original, URL, body, stack) em `last_error` no caminho do sweep. Use exclusivamente o literal `"ProcessingOrphaned"`.
 
 ### Gerenciamento de webhook AbacatePay via API (Slice 2-C — 2026-06-30)
 

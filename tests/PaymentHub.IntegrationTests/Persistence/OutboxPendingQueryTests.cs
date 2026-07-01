@@ -8,16 +8,17 @@ using Microsoft.Extensions.DependencyInjection;
 namespace PaymentHub.IntegrationTests.Persistence;
 
 /// <summary>
-/// Verifies the dispatcher-facing pending query on
-/// <see cref="IOutboxRepository.GetPendingForDispatchAsync"/>:
+/// Verifies the dispatcher-facing claim path on
+/// <see cref="IOutboxRepository.ClaimPendingForDispatchAsync"/>:
 /// only <c>Pending</c> events with a <c>NextRetryAt</c> in the past (or
 /// null) are returned. <c>Sent</c>, <c>Failed</c> and <c>Processing</c>
-/// events are excluded.
+/// events are excluded. After Slice 7-M1 the claim also flips the
+/// surviving rows to <c>Processing</c> in the same transaction; this
+/// test asserts that the returned rows have already been transitioned
+/// (status=<c>Processing</c>, <c>ProcessingStartedAt</c> non-null).
 ///
-/// Note: <c>Processing</c> orphans (e.g. an event that died mid-dispatch)
-/// are NOT recovered by this query. The sweep is a known gap documented
-/// in ADR-0010 and <c>docs/specs/007-inbox-outbox-workers.md</c>; it will
-/// be implemented when the project moves to multi-instance workers.
+/// Orphan sweep (Processing past TTL) is exercised separately in
+/// <c>OutboxProcessingSweepTests</c> (Slice 7-M1.6).
 /// </summary>
 [Collection(PostgresCollection.Name)]
 [Trait("Category", "Integration")]
@@ -115,7 +116,8 @@ public sealed class OutboxPendingQueryTests
         using var queryScope = _factory.CreateScope();
         var pendingRepo = queryScope.ServiceProvider.GetRequiredService<IOutboxRepository>();
 
-        var pending = await pendingRepo.GetPendingForDispatchAsync(maxItems: 50, CancellationToken.None);
+        var now = DateTime.UtcNow;
+        var pending = await pendingRepo.ClaimPendingForDispatchAsync(50, now, CancellationToken.None);
 
         pending.Should().HaveCount(2,
             because: "only Pending events whose NextRetryAt is null or in the past are dispatchable");
@@ -126,12 +128,19 @@ public sealed class OutboxPendingQueryTests
         pendingIds.Should().NotContain(dueInFuture.Id,
             because: "NextRetryAt is in the future");
         pendingIds.Should().NotContain(processing.Id,
-            because: "the query only returns Pending; orphan Processing is a known gap");
+            because: "the query only returns Pending; orphan Processing is handled by the sweep");
         pendingIds.Should().NotContain(sent.Id);
         pendingIds.Should().NotContain(failed.Id);
 
         // Results should be ordered by CreatedAt ascending.
         pending[0].Id.Should().Be(dueNow.Id,
             because: "dueNow was enqueued before dueInPast, and the query orders by CreatedAt");
+
+        // Slice 7-M1: the claim flips the surviving rows to `Processing` in the same
+        // transaction, so the returned entities must already reflect that state.
+        pending.Should().OnlyContain(o => o.Status == OutboxEventStatus.Processing,
+            because: "ClaimPendingForDispatchAsync transitions the row atomically");
+        pending.Should().OnlyContain(o => o.ProcessingStartedAt != null,
+            because: "the worker reads ProcessingStartedAt to enforce the orphan TTL");
     }
 }

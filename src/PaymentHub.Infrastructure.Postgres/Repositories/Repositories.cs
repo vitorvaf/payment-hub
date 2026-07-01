@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using NpgsqlTypes;
 using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Domain.Entities;
 using PaymentHub.Domain.Enums;
@@ -184,19 +186,168 @@ public class OutboxRepository : Application.Abstractions.Outbox.IOutboxRepositor
     public async Task AddAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken)
         => await _db.OutboxEvents.AddAsync(outboxEvent, cancellationToken);
 
-    public async Task<IReadOnlyList<OutboxEvent>> GetPendingForDispatchAsync(int maxItems, CancellationToken cancellationToken)
-        => await _db.OutboxEvents
-            .Where(o => o.Status == Domain.Enums.OutboxEventStatus.Pending
-                        && (o.NextRetryAt == null || o.NextRetryAt <= DateTime.UtcNow))
+    /// <summary>
+    /// Slice 7-M1: atomic claim of dispatchable <c>Pending</c> rows. Runs SELECT ...
+    /// FOR UPDATE SKIP LOCKED and UPDATE in a single transaction so two concurrent worker
+    /// instances never receive the same row.
+    ///
+    /// <para>
+    /// Implementation notes:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>We drop down to a raw <see cref="NpgsqlConnection"/> (via
+    /// <c>Database.GetDbConnection</c>) because EF Core 10 has no first-class LINQ
+    /// translation for <c>SKIP LOCKED</c>. ADO.NET gives us full control over the
+    /// transaction boundary.</item>
+    /// <item><c>next_retry_at</c> semantics: a row is dispatchable when it is NULL
+    /// (never retried) or &lt;= <paramref name="now"/> (backoff expired). Rows with a
+    /// future <c>next_retry_at</c> are skipped.</item>
+    /// <item>After the UPDATE commits, we reload the claimed rows via EF Core so the
+    /// caller receives tracked entities with all mapped columns populated. The EF
+    /// tracker is unaware of the ADO.NET UPDATE, so we use <c>AsNoTracking</c> on the
+    /// reload to avoid stale-cache collisions with the same row in the same DbContext
+    /// (the worker re-saves through <c>IOutboxEventStore</c>, which re-attaches).</item>
+    /// </list>
+    /// </summary>
+    public async Task<IReadOnlyList<OutboxEvent>> ClaimPendingForDispatchAsync(
+        int batchSize,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (batchSize <= 0) return Array.Empty<OutboxEvent>();
+
+        // Snapshot the connection so we can drive the transaction ourselves. EF Core
+        // owns this DbConnection; we must NOT dispose it.
+        var dbConnection = _db.Database.GetDbConnection();
+        var connectionWasClosed = dbConnection.State != System.Data.ConnectionState.Open;
+        if (connectionWasClosed)
+        {
+            await dbConnection.OpenAsync(cancellationToken);
+        }
+
+        List<Guid> claimedIds;
+        await using (var transaction = await dbConnection.BeginTransactionAsync(
+            System.Data.IsolationLevel.ReadCommitted, cancellationToken))
+        {
+            const string selectSql = @"
+SELECT id
+FROM outbox_events
+WHERE status = 'Pending'
+  AND (next_retry_at IS NULL OR next_retry_at <= @now)
+ORDER BY created_at
+FOR UPDATE SKIP LOCKED
+LIMIT @batchSize;";
+
+            await using (var selectCommand = ((NpgsqlConnection)dbConnection).CreateCommand())
+            {
+                selectCommand.Transaction = (NpgsqlTransaction)transaction;
+                selectCommand.CommandText = selectSql;
+                selectCommand.Parameters.Add(new NpgsqlParameter<DateTime>("now", NpgsqlDbType.TimestampTz) { TypedValue = now });
+                selectCommand.Parameters.Add(new NpgsqlParameter<int>("batchSize", NpgsqlDbType.Integer) { TypedValue = batchSize });
+
+                claimedIds = new List<Guid>(batchSize);
+                await using (var reader = await selectCommand.ExecuteReaderAsync(cancellationToken))
+                {
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        claimedIds.Add(reader.GetFieldValue<Guid>(0));
+                    }
+                }
+            }
+
+            if (claimedIds.Count == 0)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                if (connectionWasClosed)
+                {
+                    await dbConnection.CloseAsync();
+                }
+                return Array.Empty<OutboxEvent>();
+            }
+
+            const string updateSql = @"
+UPDATE outbox_events
+SET status = 'Processing',
+    processing_started_at = @now,
+    updated_at = @now
+WHERE id = ANY(@claimedIds);";
+
+            await using (var updateCommand = ((NpgsqlConnection)dbConnection).CreateCommand())
+            {
+                updateCommand.Transaction = (NpgsqlTransaction)transaction;
+                updateCommand.CommandText = updateSql;
+                updateCommand.Parameters.Add(new NpgsqlParameter<DateTime>("now", NpgsqlDbType.TimestampTz) { TypedValue = now });
+                updateCommand.Parameters.Add(new NpgsqlParameter<Guid[]>("claimedIds", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { TypedValue = claimedIds.ToArray() });
+                await updateCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        if (connectionWasClosed)
+        {
+            await dbConnection.CloseAsync();
+        }
+
+        // Reload through EF Core so the caller receives entities with all mapped columns
+        // populated. AsNoTracking avoids stale-cache collisions: the worker re-saves via
+        // IOutboxEventStore which re-attaches on its own.
+        var reloaded = await _db.OutboxEvents
+            .AsNoTracking()
+            .Where(o => claimedIds.Contains(o.Id))
             .OrderBy(o => o.CreatedAt)
-            .Take(maxItems)
             .ToListAsync(cancellationToken);
+
+        return reloaded;
+    }
+
+    /// <summary>
+    /// Slice 7-M1: orphan sweep. Re-enqueues rows stuck in <c>Processing</c> past the
+    /// TTL back to <c>Pending</c>. Uses a single UPDATE ... WHERE so it is atomic and
+    /// idempotent. The category persisted to <c>last_error</c> is
+    /// <see cref="WebhookDispatcherCategory.ProcessingOrphaned"/>; never the original
+    /// exception, URL, body or signature.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The sweep sets <c>next_retry_at = NULL</c> (not <c>@now</c>) so the row is
+    /// immediately dispatchable in the same iteration. If we stamped <c>next_retry_at = now</c>,
+    /// the claim's filter <c>(next_retry_at IS NULL OR next_retry_at &lt;= @now)</c> would
+    /// require strict &lt;=; with a brand-new <c>now</c> from the claim path (microseconds
+    /// later), the comparison would fail and the row would stay in <c>Pending</c> for one
+    /// extra tick. Setting it to <c>NULL</c> makes the dispatch deterministic.
+    /// </para>
+    /// </remarks>
+    public async Task<int> SweepOrphanedProcessingAsync(DateTime cutoff, CancellationToken cancellationToken)
+    {
+        const string sql = @"
+UPDATE outbox_events
+SET status = 'Pending',
+    retry_count = retry_count + 1,
+    last_error = 'ProcessingOrphaned',
+    next_retry_at = NULL,
+    processing_started_at = NULL,
+    updated_at = @now
+WHERE status = 'Processing'
+  AND processing_started_at IS NOT NULL
+  AND processing_started_at < @cutoff;";
+
+        var now = DateTime.UtcNow;
+        return await _db.Database.ExecuteSqlRawAsync(sql,
+            new object[] {
+                new NpgsqlParameter<DateTime>("now", NpgsqlDbType.TimestampTz) { TypedValue = now },
+                new NpgsqlParameter<DateTime>("cutoff", NpgsqlDbType.TimestampTz) { TypedValue = cutoff },
+            },
+            cancellationToken);
+    }
 
     public Task<OutboxEvent?> GetByIdAsync(Guid id, CancellationToken cancellationToken)
         => _db.OutboxEvents.FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
 
     public Task UpdateAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken)
     {
+        // EF Core change tracker detects mutations on tracked entities;
+        // AddAsync followed by mutations correctly issues UPDATE.
         _db.OutboxEvents.Update(outboxEvent);
         return Task.CompletedTask;
     }

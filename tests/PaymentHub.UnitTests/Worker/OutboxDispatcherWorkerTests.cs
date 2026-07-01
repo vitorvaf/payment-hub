@@ -38,7 +38,7 @@ public class OutboxDispatcherWorkerTests
         };
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(50, It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(50, It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(pending);
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -54,7 +54,7 @@ public class OutboxDispatcherWorkerTests
 
         // Assert: repository was queried once with the configured batch size and every
         // returned event reached the dispatcher.
-        repository.Verify(r => r.GetPendingForDispatchAsync(50, It.IsAny<CancellationToken>()), Times.Once);
+        repository.Verify(r => r.ClaimPendingForDispatchAsync(50, It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Once);
         dispatcher.Verify(d => d.DispatchAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()),
             Times.Exactly(pending.Count));
     }
@@ -66,7 +66,7 @@ public class OutboxDispatcherWorkerTests
         var outbox = NewOutboxEvent("payment.approved");
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { outbox });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -83,15 +83,16 @@ public class OutboxDispatcherWorkerTests
         // Act
         await worker.DispatchOnceAsync(CancellationToken.None);
 
-        // Assert: event transitioned to Sent, with LastError cleared and at least 2 saves
-        // (one for MarkProcessing + one for MarkSent).
+        // Assert: event transitioned to Sent, with LastError cleared and exactly 1 save
+        // (Slice 7-M1: MarkProcessing is now performed by ClaimPendingForDispatchAsync
+        // inside the same transaction; the worker only persists MarkSent).
         outbox.Status.Should().Be(OutboxEventStatus.Sent);
         outbox.SentAt.Should().NotBeNull();
         outbox.LastError.Should().BeNull();
 
         eventStore.Verify(s => s.SaveAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
-        eventStore.Verify(s => s.SaveAsync(outbox, It.IsAny<CancellationToken>()), Times.Exactly(2));
+            Times.Once);
+        eventStore.Verify(s => s.SaveAsync(outbox, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -101,7 +102,7 @@ public class OutboxDispatcherWorkerTests
         var outbox = NewOutboxEvent("payment.approved");
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { outbox });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -169,7 +170,7 @@ public class OutboxDispatcherWorkerTests
         outbox.GetType(); // touch to ensure entity is in scope for the read access below
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { outbox });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -208,7 +209,7 @@ public class OutboxDispatcherWorkerTests
         var outbox = NewOutboxEvent("payment.approved");
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { outbox });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -247,7 +248,7 @@ public class OutboxDispatcherWorkerTests
         var outbox = NewOutboxEvent("payment.approved");
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { outbox });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -286,9 +287,12 @@ public class OutboxDispatcherWorkerTests
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             "payment.approved",
             "{\"secret\":\"" + secret + "\",\"eventId\":\"00000000-0000-0000-0000-000000000001\"}");
+        // Slice 7-M1: ClaimPendingForDispatchAsync returns the row already in `Processing`;
+        // stamp it so the worker's safety check accepts the entity.
+        outbox.MarkProcessing(FixedNow);
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { outbox });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -329,9 +333,12 @@ public class OutboxDispatcherWorkerTests
                 RetryPolicy.NextRetryAt(i + 1, FixedNow)!.Value);
         }
         outbox.RetryCount.Should().Be(RetryPolicy.MaxAttempts - 1);
+        // Slice 7-M1: ClaimPendingForDispatchAsync returns the row already in `Processing`.
+        // Re-stamp after the retry loop so the worker's safety check accepts the entity.
+        outbox.MarkProcessing(FixedNow);
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { outbox });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -375,7 +382,7 @@ public class OutboxDispatcherWorkerTests
         var originalIds = new[] { ok.Id, httpFail.Id, network.Id };
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { ok, httpFail, network });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -427,9 +434,11 @@ public class OutboxDispatcherWorkerTests
         // Repprocess stability (C.1): the OutboxEvent.Id never changes across retry.
         new[] { ok.Id, httpFail.Id, network.Id }.Should().Equal(originalIds);
 
-        // eventStore.SaveAsync called twice per event (MarkProcessing + final mark).
+        // eventStore.SaveAsync called once per event (Slice 7-M1: MarkProcessing is now
+        // performed by ClaimPendingForDispatchAsync inside the same transaction; the
+        // worker only persists the final mark).
         eventStore.Verify(s => s.SaveAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(6));
+            Times.Exactly(3));
     }
 
     [Fact]
@@ -441,7 +450,7 @@ public class OutboxDispatcherWorkerTests
         var outbox = NewOutboxEvent("payment.approved");
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { outbox });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -482,8 +491,11 @@ public class OutboxDispatcherWorkerTests
         var originalId = outbox.Id;
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { outbox });
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            // Slice 7-M1: the test exercises two iterations; the entity transitions back to
+            // `Pending` (via MarkRetryWithStatus) between iterations, so we re-stamp
+            // `Processing` inside the mock to mirror the production claim contract.
+            .ReturnsAsync(() => { outbox.MarkProcessing(FixedNow); return new[] { outbox }; });
 
         var eventStore = new Mock<IOutboxEventStore>();
         eventStore.Setup(s => s.SaveAsync(It.IsAny<OutboxEvent>(), It.IsAny<CancellationToken>()))
@@ -525,9 +537,12 @@ public class OutboxDispatcherWorkerTests
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             "payment.approved",
             "{\"secret\":\"" + secret + "\",\"eventId\":\"00000000-0000-0000-0000-000000000001\"}");
+        // Slice 7-M1: ClaimPendingForDispatchAsync returns the row already in `Processing`;
+        // stamp it so the worker's safety check accepts the entity.
+        outbox.MarkProcessing(FixedNow);
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { outbox });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -569,9 +584,12 @@ public class OutboxDispatcherWorkerTests
                 RetryPolicy.NextRetryAt(i + 1, FixedNow)!.Value);
         }
         outbox.RetryCount.Should().Be(RetryPolicy.MaxAttempts - 1);
+        // Slice 7-M1: ClaimPendingForDispatchAsync returns the row already in `Processing`.
+        // Re-stamp after the retry loop so the worker's safety check accepts the entity.
+        outbox.MarkProcessing(FixedNow);
 
         var repository = new Mock<IOutboxRepository>();
-        repository.Setup(r => r.GetPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        repository.Setup(r => r.ClaimPendingForDispatchAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { outbox });
 
         var eventStore = new Mock<IOutboxEventStore>();
@@ -602,7 +620,15 @@ public class OutboxDispatcherWorkerTests
     // --- helpers ---
 
     private static OutboxEvent NewOutboxEvent(string eventType)
-        => new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), eventType, "{}");
+    {
+        // Slice 7-M1: tests now drive ClaimPendingForDispatchAsync which returns entities
+        // already in `Processing` with a stamped `ProcessingStartedAt`. MarkProcessing here
+        // mirrors that contract so the worker's safety check is satisfied.
+        var ev = new OutboxEvent(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), eventType, "{}");
+        ev.MarkProcessing(FixedNow);
+        return ev;
+    }
 
     /// <summary>
     /// Builds the worker with a real <see cref="IServiceScopeFactory"/> resolved from an

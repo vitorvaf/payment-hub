@@ -27,5 +27,13 @@ public enum WebhookDispatcherCategory
     MissingWebhookSecret = 6,
 
     /// <summary>Any other exception surfaced by the dispatcher. The exception itself is logged but not persisted to <c>LastError</c>.</summary>
-    UnexpectedDispatcherError = 7
+    UnexpectedDispatcherError = 7,
+
+    /// <summary>
+    /// Slice 7-M1: the row was left in <c>Processing</c> after a worker crash / restart and the
+    /// orphan sweep (<c>SweepOrphanedProcessingAsync</c>) re-enqueued it to <c>Pending</c>. The
+    /// sweep timestamp (not the original failure reason) is what triggers the requeue; the
+    /// underlying crash signature lives in operator logs only.
+    /// </summary>
+    ProcessingOrphaned = 8
 }

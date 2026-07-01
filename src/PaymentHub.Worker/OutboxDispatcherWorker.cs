@@ -79,27 +79,57 @@ public sealed class OutboxDispatcherWorker : BackgroundService
     /// <see cref="ExecuteAsync"/>. Production code always reaches it through the hosted
     /// service loop.
     /// </summary>
+    /// <remarks>
+    /// Slice 7-M1: the iteration now consumes the atomic <c>ClaimPendingForDispatchAsync</c>
+    /// (SELECT ... FOR UPDATE SKIP LOCKED + UPDATE in one transaction). The returned entities
+    /// are already in <c>Processing</c> with <c>ProcessingStartedAt</c> set, so the worker no
+    /// longer calls <see cref="OutboxEvent.MarkProcessing()"/> separately. The orphan sweep
+    /// (<c>SweepOrphanedProcessingAsync</c>) is wired in 7-M1.4.
+    /// </remarks>
     internal async Task DispatchOnceAsync(CancellationToken cancellationToken)
     {
+        // Snapshot the clock once per iteration so every retry schedule in this batch is
+        // computed against the same "now". Avoids sub-millisecond jitter between events
+        // and keeps the retry policy deterministic in tests. Also used as the
+        // `processing_started_at` stamp persisted by ClaimPendingForDispatchAsync.
+        var now = _clock.UtcNow;
+
         await using var scope = _scopeFactory.CreateAsyncScope();
         var repository = scope.ServiceProvider.GetRequiredService<IOutboxRepository>();
         var eventStore = scope.ServiceProvider.GetRequiredService<IOutboxEventStore>();
         var dispatcher = scope.ServiceProvider.GetRequiredService<IApplicationWebhookDispatcher>();
 
-        var pending = await repository.GetPendingForDispatchAsync(_options.OutboxWorkerBatchSize, cancellationToken);
-        if (pending.Count == 0) return;
-
-        _logger.LogInformation("Dispatching {Count} outbox events", pending.Count);
-
-        // Snapshot the clock once per iteration so every retry schedule in this batch is
-        // computed against the same "now". Avoids sub-millisecond jitter between events
-        // and keeps the retry policy deterministic in tests.
-        var now = _clock.UtcNow;
-
-        foreach (var outbox in pending)
+        // Slice 7-M1.4: orphan sweep runs BEFORE the claim so a worker restart can recover
+        // any rows the previous instance left in `Processing` past the configured TTL, and
+        // then proceed to dispatch them in the same iteration when the backoff window allows.
+        var cutoff = now.AddSeconds(-Math.Max(0, _options.OutboxProcessingTimeoutSeconds));
+        var sweepRecovered = await repository.SweepOrphanedProcessingAsync(cutoff, cancellationToken);
+        if (sweepRecovered > 0)
         {
-            outbox.MarkProcessing();
-            await eventStore.SaveAsync(outbox, cancellationToken);
+            _logger.LogInformation(
+                "OutboxDispatcherWorker orphan sweep recovered {Recovered} Processing rows past the {Timeout}s TTL",
+                sweepRecovered, _options.OutboxProcessingTimeoutSeconds);
+        }
+
+        var claimed = await repository.ClaimPendingForDispatchAsync(
+            _options.OutboxWorkerBatchSize, now, cancellationToken);
+        if (claimed.Count == 0) return;
+
+        _logger.LogInformation("Dispatching {Count} outbox events", claimed.Count);
+
+        foreach (var outbox in claimed)
+        {
+            // Sanity: claim must have already flipped the row to Processing with a non-null
+            // ProcessingStartedAt. If a future regression removes the UPDATE from the claim
+            // path the worker must NOT silently mark it Processing again — that would
+            // re-introduce the double-dispatch race the slice closes.
+            if (outbox.Status != OutboxEventStatus.Processing || outbox.ProcessingStartedAt is null)
+            {
+                _logger.LogError(
+                    "Outbox event {OutboxId} was returned by ClaimPendingForDispatchAsync in an invalid state (status={Status}, processingStartedAt={ProcessingStartedAt}). Skipping dispatch to avoid a regression of the multi-instance race.",
+                    outbox.Id, outbox.Status, outbox.ProcessingStartedAt);
+                continue;
+            }
 
             try
             {

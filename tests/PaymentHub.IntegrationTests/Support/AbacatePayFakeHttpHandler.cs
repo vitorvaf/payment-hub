@@ -93,6 +93,20 @@ public sealed class AbacatePayFakeHttpHandler : HttpMessageHandler
             LastRequestBody = null;
         }
 
+        // Slice 2-C.1: route webhook-management paths separately so the
+        // E2E test for `POST /webhooks/create` and `GET /webhooks/list`
+        // can assert the outbound payload without competing with the
+        // transparent-PIX path that the rest of the E2E suite covers.
+        var path = LastRequestPath ?? string.Empty;
+        if (path.EndsWith("/webhooks/create", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(HandleWebhookCreate());
+        }
+        if (path.EndsWith("/webhooks/list", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(HandleWebhookList());
+        }
+
         if (SimulateEnvelopeFailure)
         {
             return Task.FromResult(BuildJson(
@@ -127,6 +141,38 @@ public sealed class AbacatePayFakeHttpHandler : HttpMessageHandler
         };
 
         return Task.FromResult(BuildJson(HttpStatusCode.OK, responseBody));
+    }
+
+    private HttpResponseMessage HandleWebhookCreate()
+    {
+        // Returns a success envelope that mirrors the AbacatePay
+        // `POST /webhooks/create` response shape. The id is a
+        // deterministic UUID so the E2E test can correlate the
+        // captured outbound body to the persisted
+        // `webhook_remote_status` row.
+        var webhookId = "whk_" + Guid.NewGuid().ToString("N");
+        return BuildJson(HttpStatusCode.OK, new
+        {
+            data = new { id = webhookId },
+            success = true,
+            error = (string?)null
+        });
+    }
+
+    private HttpResponseMessage HandleWebhookList()
+    {
+        return BuildJson(HttpStatusCode.OK, new
+        {
+            webhooks = new[]
+            {
+                new
+                {
+                    id = "whk_listed_1",
+                    url = "https://payment-hub.example.com/api/v1/webhooks/AbacatePay",
+                    events = new[] { "transparent.completed", "transparent.refunded" }
+                }
+            }
+        });
     }
 
     private static long? ExtractAmount(string? body)

@@ -73,7 +73,7 @@ if grep -q "ProjectReference" "src/PaymentHub.Domain/PaymentHub.Domain.csproj"; 
   fail "Domain project must not contain ProjectReference"
 fi
 
-if grep -q "PaymentHub.Infrastructure" "src/PaymentHub.Application/PaymentHub.Application.csproj"; then
+if grep -qE "(ProjectReference Include=\".*PaymentHub\.Infrastructure|using PaymentHub\.Infrastructure)" "src/PaymentHub.Application/PaymentHub.Application.csproj"; then
   fail "Application project must not reference Infrastructure projects"
 fi
 

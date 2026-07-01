@@ -45,12 +45,25 @@ public static class ProvidersServiceCollectionExtensions
         services.AddSingleton<IAbacatePayWebhookSignatureVerifier, HmacAbacatePayWebhookSignatureVerifier>();
         services.AddSingleton<IAbacatePayWebhookNormalizer, AbacatePayWebhookNormalizer>();
 
-        // Slice 2-C: webhook management client (registration of webhook
-        // subscriptions at the upstream). The default no-op keeps the
-        // API functional out-of-the-box; a real HTTP client will replace
-        // it in a follow-up slice guarded by
-        // `Providers:AbacatePay:AllowWebhookRegistration`.
-        services.AddSingleton<IProviderWebhookManagementClient, NoOpProviderWebhookManagementClient>();
+        // Slice 2-C.1: named HttpClient dedicated to webhook management calls.
+        // Kept distinct from `abacatepay` (which serves transparent create/check/simulate)
+        // so the webhook-management lifecycle can be tuned independently in the
+        // future (different timeout, retry policy, rate-limit reservation).
+        services.AddHttpClient(AbacatePayWebhookManagementClient.HttpClientName, (sp, http) =>
+        {
+            var optionsMonitor = sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<AbacatePayOptions>>();
+            var opts = optionsMonitor.CurrentValue;
+            http.BaseAddress = new Uri(opts.BaseUrl.TrimEnd('/') + "/");
+            http.Timeout = TimeSpan.FromSeconds(Math.Max(1, opts.TimeoutSeconds));
+        });
+
+        // Slice 2-C.1: real HTTP client replacing the Slice 2-C no-op. The
+        // feature flag (`Providers:AbacatePay:AllowWebhookRegistration`)
+        // remains opt-in; default false in `appsettings.json`. The handler
+        // already short-circuits when the flag is off, so this client only
+        // emits traffic when explicitly authorised by both the handler and
+        // the feature policy.
+        services.AddSingleton<IProviderWebhookManagementClient, AbacatePayWebhookManagementClient>();
         services.AddSingleton<IProviderWebhookRegistrationFeaturePolicy, AbacatePayWebhookRegistrationFeaturePolicy>();
 
         // Other providers remain skeleton for now.

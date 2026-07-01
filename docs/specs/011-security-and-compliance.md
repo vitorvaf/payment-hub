@@ -274,6 +274,70 @@ do operador de timeout do `HttpClient`.
 `AbacatePayProviderAdapter.CreateCheckoutAsync` traduz a exception em
 `CreateCheckoutProviderResult { Success = false, ErrorMessage = "AbacatePay error (Category)." }`. A `ErrorMessage` tambem e segura: contem apenas a categoria enum em texto. O `Payment.RegisterAttempt` recebe a categoria enum via `providerResult.ErrorMessage`, mas o `PaymentAttempt.LastError` NAO armazena a mensagem do client.
 
+### Slice 2-C.1 — Cliente HTTP real de gerenciamento de webhook AbacatePay (2026-06-30)
+
+A Slice 2-C.1 substitui o `NoOpProviderWebhookManagementClient` (que apenas logava o callback) por um client HTTP real que chama `POST /webhooks/create` no upstream AbacatePay. A interface `IProviderWebhookManagementClient` e o handler `ConfigureProviderAccountWebhookHandler` (Slice 2-C) NAO foram alterados — os 3 gates de remote registration (`RegisterRemotely=true`, `WebhookSecret` nao-nulo, `Providers:AbacatePay:AllowWebhookRegistration=true`) ja' existem, e o Slice 2-C.1 apenas substitui a implementacao por tras da interface.
+
+#### Fluxo de secrets no client real
+
+1. **apiKey** (claro, em memoria apenas):
+   - O handler passa o `ProtectedCredentials` (blob AES-protegido) para o client via `RegisterWebhookAsync(..., string protectedCredentials, ...)`.
+   - O client chama `IProviderAccountCredentialsReader.ReadApiKey(protectedCredentials)` que **unprotecta** o blob e devolve o `apiKey` plaintext. O `apiKey` vive apenas na variavel local `apiKey` do metodo, usado para construir o `Authorization: Bearer {apiKey}` header. Nao e persistido, nao e logado, nao e incluido em response.
+   - Adicionada `InternalsVisibleTo("PaymentHub.Infrastructure.Postgres")` em `PaymentHub.Application.csproj` para que o adapter de `IProviderAccountCredentialsReader` em `Infrastructure.Postgres` possa chamar o inspector `ProviderAccountCredentialsInspector` (que continua `internal static` na Application).
+
+2. **webhookSecret** (claro, transiente):
+   - O handler passa o `WebhookSecret` plaintext (recebido do request) para o client via parametro `webhookSecret`.
+   - O client usa o valor para popular o campo `secret` do JSON body enviado ao upstream. Nao e logado, nao e persistido em `last_error`, nao e incluido em response.
+   - O secret retornado pelo upstream NAO existe (o endpoint `POST /webhooks/create` retorna apenas `{ data: { id } }`).
+
+3. **EncryptedCredentials** (blob AES-protegido):
+   - O handler **NUNCA** retorna o `EncryptedCredentials` em response. Validado por reflexao em `ProviderAccountsWebhookControllerTests` e `AbacatePayWebhookManagementE2ETests` (DTO nao expoe `EncryptedCredentials`).
+
+#### No-leak guarantees (anti-patterns MUST-NOT-REGRESS)
+
+- `LastError` do `OutboxEvent` NAO e tocado pelo client de webhook management (a slice e' somente sobre `webhook_remote_status` que ja' e' um enum serializado).
+- `last_error` em caso de categoria de erro NAO inclui `ex.Message`. A mensagem da `AbacatePayClientException` carrega apenas a categoria enum + status code generico (`"AbacatePay HTTP {statusCode}."`).
+- **NUNCA** loga `apiKey`, `webhookSecret`, `Authorization` header, body request, body response, ou signature.
+- Loga apenas: `providerCode` (enum value), `endpoint.Length` (int), `eventCount` (int), `category` (enum value), `statusCode` (int).
+- **NUNCA** retorna o `apiKey` no body do PUT/GET. Validado por reflexao em 2 testes do controller + 1 teste E2E.
+
+#### Categorizacao de erros
+
+Reusando `AbacatePayClientException` / `AbacatePayErrorCategory` (ja documentado acima para o Slice 2-A):
+
+| Status | Categoria | Transient |
+|--------|-----------|-----------|
+| 400 | BadRequest | nao |
+| 401/403 | Unauthorized | nao |
+| 404 | NotFound | nao |
+| 429 | RateLimited | sim |
+| 5xx | ServerError | sim |
+| `HttpRequestException` | Network | sim |
+| `TaskCanceledException` (sem caller cancel) | Timeout | sim |
+| `TaskCanceledException` (com caller cancel) | `OperationCanceledException` propaga | n/a |
+| envelope `success=false` com HTTP 2xx | EnvelopeFailure | nao |
+| flag off (defensivo) | `RegistrationFailed` (categoria nova `RegistrationDisabled = 11` disponivel mas nao usada) | nao |
+| Provider != AbacatePay | `RegistrationFailed` (sem HTTP) | n/a |
+
+#### `IProviderAccountCredentialsReader` (nova abstraction)
+
+Promovida a interface publica em `PaymentHub.Application/Abstractions/Security/IProviderAccountCredentialsReader.cs` para permitir que o client de Infrastructure acesse a leitura do `apiKey` sem expor o helper privado `ProviderAccountCredentialsInspector` (que continua `internal static`). Mantem a invariante "no exception on bad input" — `ReadApiKey` retorna `null` em vez de lancar quando o blob nao pode ser unprotected.
+
+#### Di
+
+- `IProviderWebhookManagementClient` registrado como `AbacatePayWebhookManagementClient` (Singleton). `NoOpProviderWebhookManagementClient` removido.
+- Named `HttpClient` dedicado: `abacatepay-webhooks` (distinto de `abacatepay` que serve transparent-PIX). Permite tunar timeout/retry/rate-limit do ciclo de webhook management independentemente.
+- `IProviderAccountCredentialsReader` registrado como Singleton em `Infrastructure.Postgres/PostgresServiceCollectionExtensions.cs`.
+
+#### Anti-regression rules (re-asserting Slice 2-C)
+
+- `webhook_events` permanece `text` (NAO `jsonb`).
+- `webhookSecret` NAO ganha coluna propria.
+- DTOs de request NAO aceitam `tenantId`/`applicationId` (Slice 6-B).
+- 3-gate rule no handler preservada.
+- `OutboxDispatcherWorker` e HMAC interno NAO foram alterados.
+- A migration Slice 2-C (`20260630001726_AddProviderAccountWebhookColumns`) NAO foi alterada por esta slice.
+
 #### Simulacao opt-in
 
 `Providers:AbacatePay:AllowDevModeSimulation=true` liga o endpoint

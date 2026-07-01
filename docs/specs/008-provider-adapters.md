@@ -97,6 +97,61 @@ Slice 2-C introduz dois endpoints server-to-server para configurar (PUT) e consu
 - **Controller** `ProviderAccountsController` ganha 2 novos endpoints sob `[Route("api/v1/provider-accounts")]`. Reusa o padrao `ITenantContext` da Slice 6-B (try/catch em `InvalidOperationException` retornando 401). Status mapping: 200 / 401 / 404 / 409. Body em 401/404/409 sempre com `{ "error": "...", "message": "..." }` generico, sem `tenantId`/`applicationId`/`providerAccountId` que pudessem vazar existencia.
 - **Cobertura de testes**: 14 em `ConfigureProviderAccountWebhookHandlerTests`, 9 em `GetProviderAccountWebhookHandlerTests`, 11 em `ConfigureAbacatePayWebhookRequestValidatorTests`, 12 em `ProviderAccountsWebhookControllerTests`, 3 em `ProviderAccountWebhookPersistenceTests`. Total adicionado pelo Slice 2-C: 49 testes.
 
+### AbacatePay — Cliente HTTP real de gerenciamento de webhook (Slice 2-C.1 — 2026-06-30)
+
+Slice 2-C.1 substitui o `NoOpProviderWebhookManagementClient` por um client HTTP real que chama `POST /webhooks/create` no upstream AbacatePay. A interface `IProviderWebhookManagementClient` permanece inalterada — a slice 2-C ja define o contrato e os 3 gates do handler (`RegisterRemotely=true && WebhookSecret != null && policy.IsRemoteRegistrationEnabled(ProviderCode.AbacatePay)`), entao o handler nao precisa de alteracoes.
+
+- **Client real** `AbacatePayWebhookManagementClient` (em `src/PaymentHub.Infrastructure.Providers/AbacatePay/AbacatePayWebhookManagementClient.cs`):
+  - **Named HttpClient dedicado**: `abacatepay-webhooks` (distinto do `abacatepay` que serve os endpoints de transparent-PIX). Permite tunar timeout / retry / rate-limit do ciclo de webhook management independentemente do ciclo de create-transport. Configurado em `ProvidersServiceCollectionExtensions.AddPaymentHubProviders(...)` com BaseAddress de `AbacatePayOptions.BaseUrl` + Timeout de `AbacatePayOptions.TimeoutSeconds`.
+  - **Pipeline de 4 gates**:
+    1. Provider check: so `ProviderCode.AbacatePay` prossegue. Outros providers retornam `RegistrationFailed` sem chamar HTTP.
+    2. Feature flag: re-checagem defensiva de `Providers:AbacatePay:AllowWebhookRegistration`. O handler ja short-circuita, mas o client re-checa para nao ser burlado por callers futuros.
+    3. Pre-flight: `callbackUrl` nao-vazio, `events` nao-vazio, `webhookSecret` nao-vazio. Falha → `RegistrationFailed`.
+    4. ApiKey extraction: `IProviderAccountCredentialsReader.ReadApiKey(protectedCredentials)` recupera o apiKey. Falha → `RegistrationFailed`.
+  - **Request**:
+    - Method: `POST`. Path: `webhooks/create` (relativo, preserva `/v2/` do `BaseAddress`).
+    - Header: `Authorization: Bearer {apiKey}`.
+    - Body JSON: `{ "name": "Payment Hub - AbacatePay", "endpoint": "{callbackUrl}", "secret": "{webhookSecret}", "events": [...] }`.
+  - **Categorizacao de erros** reusando `AbacatePayClientException` / `AbacatePayErrorCategory`:
+    - 400 → `BadRequest`. 401/403 → `Unauthorized`. 404 → `NotFound`. 429 → `RateLimited`. 5xx → `ServerError`.
+    - `HttpRequestException` → `Network` (transient). `TaskCanceledException` com cancellation do caller → propaga `OperationCanceledException`; sem cancelamento do caller → `Timeout` (transient).
+    - Envelope `success=false` ou `data` null com HTTP 2xx → `RegistrationFailed` (categoria `EnvelopeFailure` por tras).
+    - Todas as excecoes sao capturadas e traduzidas para `RegistrationFailed` — o client NAO propaga exceptions para o handler exceto `OperationCanceledException`.
+  - **No-leak guarantees** (re-asserting audit Slice 2-C anti-patterns):
+    - **NUNCA** loga `apiKey`, `webhookSecret`, `Authorization` header, body request, body response.
+    - **NUNCA** persiste o secret em `last_error` ou `ProviderAccount.WebhookRemoteStatus` (que continua 4 valores enum).
+    - Loga apenas: `providerCode`, `endpoint.Length`, `eventCount`, `category` enum, `statusCode`. A mensagem de `AbacatePayClientException` carrega apenas o enum name + status code generico (`"AbacatePay HTTP {statusCode}."`).
+  - **Nova categoria** `AbacatePayErrorCategory.RegistrationDisabled = 11` adicionada ao enum (Slice 2-C.1). Documentada inline; nunca e lancada pelo client real (que prefere retornar `RegistrationFailed`), mas fica disponivel para clientes futuros.
+- **Nova abstraction publica** `IProviderAccountCredentialsReader` em `PaymentHub.Application/Abstractions/Security/`:
+  - Promove o helper `ProviderAccountCredentialsInspector.UnprotectAndReadApiKey` (que era `internal static` na Slice 2-C) para uma interface publica cross-layer.
+  - Implementacao `ProviderAccountCredentialsReader` em `Infrastructure.Postgres/Security/` delega para o inspector preservando a invariante "no exception on bad input".
+  - Adicionado `<InternalsVisibleTo Include="PaymentHub.Infrastructure.Postgres" />` no `PaymentHub.Application.csproj` para que o inspector continue visivel.
+- **DI** (`ProvidersServiceCollectionExtensions`):
+  - `services.AddSingleton<IProviderWebhookManagementClient, AbacatePayWebhookManagementClient>();` substitui o registro do `NoOpProviderWebhookManagementClient`.
+  - `services.AddHttpClient(AbacatePayWebhookManagementClient.HttpClientName, ...)` configura o named client com BaseAddress + Timeout do `AbacatePayOptions`.
+  - `NoOpProviderWebhookManagementClient.cs` foi **removido** (registro unico substitui; Slice 2-C ja tinha o client real planejado).
+- **Persistência do status remoto** continua 100% do Slice 2-C:
+  - `webhook_remote_status` recebe `Registered` ou `RegistrationFailed` quando o client real e chamado.
+  - `webhook_remote_status` recebe `RemoteRegistrationDeferred` quando o handler short-circuita por feature flag off ou `webhookSecret` ausente.
+  - `webhook_remote_status` recebe `NotRegistered` quando o caller NAO pediu `registerRemotely`.
+  - Migracao 2-C preservada: `webhook_events` continua `text` (NAO `jsonb`); `webhookSecret` continua dentro de `EncryptedCredentials` (nenhuma coluna propria).
+- **Cobertura de testes** (Slice 2-C.1):
+  - 20 testes em `AbacatePayWebhookManagementClientTests` (17 scenarios do briefing + 3 theory cases de status codes).
+  - 2 testes em `ProviderAccountsWebhookControllerTests` (`ShouldReturnOkWithRemoteRegistrationDeferred_WhenFeatureFlagIsOffAndRegisterRemotelyTrue` + `ShouldReturnOkWithRegisteredStatus_WhenAllGatesPass`).
+  - 1 teste E2E em `AbacatePayWebhookManagementE2ETests` que exercita o caminho real via `PaymentHubApiFactory` + Postgres Testcontainers + `AbacatePayFakeHttpHandler` estendido para rotear `/webhooks/create` e `/webhooks/list`.
+  - O helper `ScriptedHandler` em `tests/PaymentHub.UnitTests/Support/` e reusado para os 17 unit tests do client.
+  - Total adicionado pelo Slice 2-C.1: **23 testes** (20 unit + 2 controller + 1 E2E).
+- **Mudancas no `AbacatePayFakeHttpHandler` (integration)**: o fake handler agora detecta `request.RequestUri.AbsolutePath`:
+  - Termina com `/webhooks/create` → responde envelope `{ "data": { "id": "whk_..." }, "success": true, "error": null }`.
+  - Termina com `/webhooks/list` → responde `{ "webhooks": [ ... ] }`.
+  - Outros paths (transparents/create) → resposta pre-existente de PIX transparente. Backward-compatible com Slice 2-A/3-IT.
+- **Anti-Regression Notes** (re-asserting Slice 2-C):
+  - `webhook_events` permanece `text` (NAO `jsonb`).
+  - `webhookSecret` NAO ganha coluna propria.
+  - DTOs NAO aceitam `tenantId`/`applicationId` (re-asserted Slice 6-B).
+  - 3-gate rule preservada no handler.
+  - `OutboxDispatcherWorker` e HMAC interno NAO foram alterados.
+
 ## Criterios de aceite
 
 - Provider code e estavel.

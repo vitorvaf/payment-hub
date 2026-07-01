@@ -19,7 +19,7 @@ Legenda de prioridade:
 |-------|-------|---------|-----------|---------|-------|--------|-------------|
 | 1 | Phase 0 | Produto, arquitetura e fronteiras | P0 | M | LOW | `IMPLEMENTED` | — |
 | 2 | Phase 1 | Core domain MVP e API | P0 | L | MEDIUM | `IMPLEMENTED` | Phase 0 |
-| 3 | Phase 2 | Primeiro adapter de provider (AbacatePay) | P0 | M | MEDIUM | `IMPLEMENTED` (Slice 2-A CONCLUIDO 2026-06-27; Slice 2-B CONCLUIDO 2026-06-29) | Phase 1 |
+| 3 | Phase 2 | Primeiro adapter de provider (AbacatePay) | P0 | M | MEDIUM | `IMPLEMENTED` (Slice 2-A CONCLUIDO 2026-06-27; Slice 2-B CONCLUIDO 2026-06-29; Slice 2-C CONCLUIDO 2026-06-30 endpoints PUT/GET webhook management; Slice 2-C.1 CONCLUIDO 2026-06-30 client HTTP real `POST /webhooks/create` substituindo `NoOpProviderWebhookManagementClient`) | Phase 1 |
 | 4 | Phase 3 | Webhooks externos e internos | P0 | M | MEDIUM | `IMPLEMENTING` (Slice 7-A CONCLUIDO 2026-06-26; Slice 2-B CONCLUIDO 2026-06-29 completa webhooks externos AbacatePay) | Phase 1 |
 | 5 | Phase 7 | Workers, Outbox e processamento assincrono | P1 | M | MEDIUM | `IMPLEMENTED` (0 gaps P1 proprios desde 2026-06-26; base de integracao entregue 2026-06-26 via Slice 1-IT; suite E2E do dispatcher entregue 2026-06-30 via Slice 7-IT; multi-instancia + sweep de Processing orfao entregue 2026-06-30 via Slice 7-M1; cobertura E2E total = 498 testes) | Phase 3, Phase 6 |
 | 6 | Phase 6 | Seguranca e confiabilidade | P1 | M | HIGH | `IMPLEMENTING` (0 gaps P1 proprios desde 2026-06-25) | Phase 1 |

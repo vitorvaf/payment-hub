@@ -89,6 +89,32 @@ Quando a slice altera rotas de webhook de provider ou endpoints de gerenciamento
   ```
 - Contratos novos vao em `docs/specs/009-api-contracts.md` antes do PR. Fica proibido inserir `tenantId`/`applicationId` em DTOs de request quando o endpoint for autenticado (re-asserting Slice 6-B).
 
+## Slice-specific (Phase 2 / Slice 2-C.1 — AbacatePay webhook management HTTP client)
+
+Quando a slice substitui o `NoOpProviderWebhookManagementClient` por um client HTTP real ou altera a pipeline de remote registration:
+
+- **`AbacatePayWebhookManagementClient`** NUNCA loga `apiKey`, `webhookSecret`, `Authorization` header, request body, ou response body. Buscar `LogWarning|LogInformation` no commit; rejeitar qualquer log que aceite o `apiKey` ou `webhookSecret` como argumento (mesmo via interpolação).
+- **`AbacatePayWebhookManagementClient`** preserva o **4-gate pipeline**: (1) provider check `providerCode == AbacatePay`, (2) feature flag `AllowWebhookRegistration`, (3) pre-flight validation (callbackUrl + events + webhookSecret nao-vazios), (4) apiKey extraction via `IProviderAccountCredentialsReader.ReadApiKey`. Remover ou reordenar qualquer gate re-abre a janela de leak. Buscar `if (providerCode != ProviderCode.AbacatePay)`, `if (!_featurePolicy.IsRemoteRegistrationEnabled(`, e a chamada a `_credentialsReader.ReadApiKey(` no commit.
+- **Named HttpClient `abacatepay-webhooks`** permanece dedicado. NUNCA reusar `abacatepay` (que serve transparent-PIX) para o client de webhook management — o BaseAddress + Timeout vem do `AbacatePayOptions` mas o lifecycle operacional e' distinto. Confirmar com `services.AddHttpClient(AbacatePayWebhookManagementClient.HttpClientName, ...)` no commit.
+- **`IProviderAccountCredentialsReader`** e' a unica porta publica para extrair `apiKey` de `EncryptedCredentials` cross-layer. NUNCA injetar `ICredentialProtector` diretamente em Infrastructure para fazer o unprotect no client. Buscar `ICredentialProtector` em `Infrastructure.Providers/AbacatePay/`; rejeitar.
+- **`NoOpProviderWebhookManagementClient`** foi **removido** em Slice 2-C.1. Re-assertir via `git grep NoOpProviderWebhookManagementClient`; se aparecer em commit novo, rejeitar (registro unico substitui).
+- **Categoria `AbacatePayErrorCategory.RegistrationDisabled = 11`** foi adicionada mas NAO e' lancada pelo client real (que prefere retornar `RegistrationFailed`). Categorias lancadas: `BadRequest`/`Unauthorized`/`NotFound`/`RateLimited`/`ServerError`/`Network`/`Timeout`/`EnvelopeFailure`. Buscar `throw new AbacatePayClientException(` no commit; o tipo da exception e o enum da categoria devem seguir o mapeamento documentado em `docs/specs/011-security-and-compliance.md` (tabela "Categorizacao de erros").
+- **Migration Slice 2-C (`20260630001726_AddProviderAccountWebhookColumns`)** NAO foi alterada por esta slice. Confirmar com `dotnet ef migrations list` + diff visual que nenhuma migration nova foi criada.
+- **DTOs de response do PUT/GET** NUNCA carregam `apiKey`, `webhookSecret`, `protectedWebhookSecret` ou `encryptedCredentials`. Validado por reflexao em `ProviderAccountsWebhookControllerTests.NewWebhookResponse_DoesNotExposeSensitiveMaterial` (Slice 2-C) e re-assertido em `AbacatePayWebhookManagementE2ETests` (Slice 2-C.1).
+- **Filtros de teste** cobrem os caminhos novos:
+  ```bash
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~AbacatePayWebhookManagementClientTests"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~ProviderAccountsWebhookControllerTests"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~AbacatePayWebhookManagementE2ETests"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~AbacatePay"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~ProviderAccount"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~EndToEnd"
+  dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj
+  ```
+- **Suite esperada apos Slice 2-C.1: 522 testes (489 unit + 33 integration).** Regressao de teste count abaixo de 518 indica quebra em alguma das suites. Regressao acima de 525 indica teste novo nao contabilizado.
+- **Configuracao:** `Providers:AbacatePay:AllowWebhookRegistration` (default `false`). Documentar override em `appsettings.json` apenas em Development. Suite E2E passa `["Providers:AbacatePay:AllowWebhookRegistration"] = "true"` na `PaymentHubApiFactory` para exercitar o caminho real.
+- **Anti-flaky em testes E2E:** se a suite flake-ar (1-2% historico), confirmar que o `AbacatePayFakeHttpHandler` esta' registrado para AMBOS os named clients (`abacatepay` E `abacatepay-webhooks`) em `PaymentHubApiFactory.ConfigureTestServices`. Sem isso, o client real faz TCP connect para `abacatepay.fake` que NAO existe e o teste vira 401/connection-refused em vez do 200 esperado.
+
 ## Slice-specific (Phase 7 / Slice 7-IT — OutboxDispatcherWorker E2E)
 
 Quando a slice cobre o despacho real do outbox para o webhook interno do `ApplicationClient`:

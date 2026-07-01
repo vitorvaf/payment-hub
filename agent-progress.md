@@ -113,14 +113,53 @@ Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e v
 
 ## Entrada atual
 
-### Slice 2-C.1 — Cliente HTTP real para `IProviderWebhookManagementClient` (call `POST /v2/webhooks/create` na AbacatePay)
+### Proxima slice recomendada
 
-Status: PLANEJADO PARA PROXIMA SESSAO
+**Slice 3-H** — Hardening de webhooks externos/internos end-to-end, OU **Phase 9** — Observabilidade minima do fluxo pagamentos/webhooks/outbox.
 
+### 2026-06-30 - Slice 2-C.1 fechado (real AbacatePay webhook management client substitui NoOp)
 
-### Slice 2-C.1 — Cliente HTTP real para `IProviderWebhookManagementClient` (call `POST /v2/webhooks/create` na AbacatePay)
-
-Status: PLANEJADO PARA PROXIMA SESSAO
+- Data: 2026-06-30
+- Agente/superficie: OpenCode (Implementer)
+- Sub-slices entregues:
+  - **2-C.1.2** — `AbacatePayErrorCategory.RegistrationDisabled = 11` adicionado; `AbacatePayWebhookModels.cs` (4 models); `AbacatePayWebhookManagementClient.cs` com 4-gate pipeline + dedicated named HttpClient `abacatepay-webhooks`.
+  - **2-C.1.3** — `IProviderAccountCredentialsReader` (public interface em Application) + `ProviderAccountCredentialsReader` (adapter em Infrastructure.Postgres); `<InternalsVisibleTo Include="PaymentHub.Infrastructure.Postgres" />` no `PaymentHub.Application.csproj`; `NoOpProviderWebhookManagementClient` removido (registro unico substitui); registered `abacatepay-webhooks` named client em `ProvidersServiceCollectionExtensions`.
+  - **2-C.1.5** — `AbacatePayWebhookManagementClientTests.cs` (NEW, 20 testes passing) cobrindo todos os 17 cenários do briefing + 3 theory cases (status codes 401/403, 5xx).
+  - **2-C.1.7** — `ProviderAccountsWebhookControllerTests.cs` ganha `NewWebhookResponse(...)` overload 3-arg + 2 novos testes (`ShouldReturnOkWithRemoteRegistrationDeferred_WhenFeatureFlagIsOffAndRegisterRemotelyTrue` + `ShouldReturnOkWithRegisteredStatus_WhenAllGatesPass`).
+  - **2-C.1.8** — `AbacatePayFakeHttpHandler.cs` estendido para rotear `/webhooks/create` e `/webhooks/list` separadamente; `PaymentHubApiFactory.cs` adiciona `["Providers:AbacatePay:AllowWebhookRegistration"] = "true"` + wires o named client `abacatepay-webhooks` ao mesmo fake; `ProtectAbacatePayCredentials` aceita `string?` para `webhookSecret`. Criado `AbacatePayWebhookManagementE2ETests.cs` com 1 teste E2E completo (PUT com Authorization Bearer + X-Tenant-Id + X-Application-Id, asserting Bearer header propagation, payload, no-leak, DB persistence).
+- Decisoes chave:
+  - **4-gate pipeline** preserva a janela de no-leak do Slice 2-C. Cada gate (provider check, feature flag, pre-flight validation, apiKey extraction via `IProviderAccountCredentialsReader`) falha retorna `RegistrationFailed` sem chamar HTTP.
+  - **Named HttpClient `abacatepay-webhooks` e' distinto** do `abacatepay` (que serve transparent-PIX). Permite tunar lifecycle operacional independentemente. Configurado em `ProvidersServiceCollectionExtensions` com BaseAddress + Timeout do `AbacatePayOptions`.
+  - **`IProviderAccountCredentialsReader` e' a unica porta publica cross-layer** para extrair apiKey. Delega para `ProviderAccountCredentialsInspector` (que permanece `internal static` na Application) preservando a invariante "no exception on bad input".
+  - **No-leak guarantees**: apiKey em memoria apenas (header Bearer), webhookSecret enviado ao upstream mas nunca logado/retornado, logs so' carregam `providerCode` + `endpoint.Length` + `eventCount` + `category` + `statusCode`.
+  - **Categorias de erro reusam** `AbacatePayClientException` / `AbacatePayErrorCategory` (400→BadRequest, 401/403→Unauthorized, 404→NotFound, 429→RateLimited, 5xx→ServerError, HttpRequestException→Network, TaskCanceledException sem caller cancel→Timeout, envelope success=false→EnvelopeFailure). Nova categoria `RegistrationDisabled = 11` adicionada mas nao usada pelo client real.
+  - **`NoOpProviderWebhookManagementClient` removido** (registro unico substitui).
+- Validacao final (2026-06-30):
+  - `dotnet build PaymentHub.slnx` → **0 errors / 0 warnings** em 9 projetos.
+  - `dotnet test PaymentHub.UnitTests/PaymentHub.UnitTests.csproj` → **489 passed**.
+  - `dotnet test PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj` → **33 passed** (31 Slice 7-M1 baseline + 2 Slice 2-C.1 includes 1 vazio stub + 1 E2E real).
+  - `dotnet test PaymentHub.slnx` → **522 passed** total.
+  - Filtros: `~AbacatePayWebhookManagementClientTests` 20 verdes; `~ProviderAccountsWebhookControllerTests` 14 verdes; `~AbacatePayWebhookManagementE2ETests` 2 verdes; `~EndToEnd` 16 verdes; `~Outbox` 58 verdes.
+  - `scripts/agent-architecture-check.sh` + `scripts/agent-docs-check.sh` + `git diff --check` verdes (esperado apos 2-C.1.10).
+- Anti-regression rules aplicadas (todas MUST-NOT-REGRESS):
+  - `webhook_events.raw_payload` (webhook_events table) permanece `text` (Slice 3-IT BLOCKER).
+  - `provider_accounts.webhook_events` permanece `text` (Slice 2-C BLOCKER).
+  - `outbox_events.payload` permanece `jsonb` (Slice 7-IT).
+  - `outbox_events.processing_started_at` permanece `timestamptz NULL` (Slice 7-M1).
+  - `webhookSecret` NAO ganha coluna propria (Slice 2-C).
+  - DTOs NAO aceitam `tenantId`/`applicationId` (Slice 6-B).
+  - `OutboxDispatcherWorker` NAO deve ser hospedado em `WebApplicationFactory`.
+  - `ApplicationWebhookCaptureHandler` default `204 NoContent` preservado.
+  - Handler 3-gate rule (RegisterRemotely + WebhookSecret + policy) preservada.
+  - Audit log `last_error` NAO contem `ex.Message` (re-asserting Slice 7-A.7).
+- Files tocados (cumulative Slice 2-C.1, 16 arquivos):
+  - Producao (8): `AbacatePayErrorCategory.cs` (modificado), `AbacatePayWebhookModels.cs` (NEW), `AbacatePayWebhookManagementClient.cs` (NEW), `IProviderAccountCredentialsReader.cs` (NEW), `ProviderAccountCredentialsReader.cs` (NEW), `PaymentHub.Application.csproj` (modificado), `PostgresServiceCollectionExtensions.cs` (modificado), `ProvidersServiceCollectionExtensions.cs` (modificado).
+  - Tests (5): `AbacatePayWebhookManagementClientTests.cs` (NEW, 20 testes), `ProviderAccountsWebhookControllerTests.cs` (modificado, +2 testes), `AbacatePayFakeHttpHandler.cs` (modificado, routing `webhooks/create` + `webhooks/list`), `PaymentHubApiFactory.cs` (modificado, AllowWebhookRegistration override + wiring), `AbacatePayWebhookManagementE2ETests.cs` (NEW, 1 teste E2E).
+  - Deleted (1): `NoOpProviderWebhookManagementClient.cs`.
+  - Docs (3, ate 2-C.1.9a): `docs/specs/008-provider-adapters.md`, `docs/specs/009-api-contracts.md`, `docs/specs/011-security-and-compliance.md`.
+  - Audit report: `docs/audits/slice-2c1-abacatepay-webhook-management-client-report-2026-06-30.md` (a ser criado em 2-C.1.9d/10).
+- Commit + push pendentes (per AGENTS.md implementer profile).
+- Proxima slice recomendada: **Slice 3-H** (Hardening de webhooks externos/internos end-to-end) ou **Phase 9** (Observabilidade minima).
 
 ## Objetivo
 

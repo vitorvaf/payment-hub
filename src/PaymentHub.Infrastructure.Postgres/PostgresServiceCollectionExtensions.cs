@@ -55,6 +55,12 @@ public static class PostgresServiceCollectionExtensions
         services.AddSingleton<IWebhookSigner, HmacWebhookSigner>();
         services.AddSingleton<IIdempotencyRequestHasher, Sha256IdempotencyRequestHasher>();
 
+        // Slice 2-C.1: public read of apiKey from ProviderAccount.EncryptedCredentials
+        // for cross-layer use (e.g. the AbacatePayWebhookManagementClient needs the
+        // apiKey in plaintext to send a Bearer header; it must NOT receive the
+        // protected blob's content from the handler).
+        services.AddSingleton<IProviderAccountCredentialsReader, ProviderAccountCredentialsReader>();
+
         // Outbound webhook dispatcher (Slice 7-A, resolves P1-4). Co-located with the HttpClient
         // factory registration so API and Worker hosts end up with the same named client and
         // the same dispatcher implementation.

@@ -130,6 +130,7 @@ Slice 1-IT  Fixture Postgres + migrations + indices criticos + repositorios prin
 Slice 3-IT  Testes E2E da API + Postgres + adapter AbacatePay + fakes de transporte  [CONCLUIDO 2026-06-29 — 4 testes P1 cobrindo checkout + webhook valido + idempotencia + fail-fast 401; 2 producao bugs encontrados e corrigidos (jsonb->text em webhook_events.raw_payload; _payments.AddAttemptAsync explicito no ProcessWebhookEventHandler); detalhes em docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md]
 Slice 7-IT  Suite E2E do ciclo Outbox → ApplicationClient webhook  [CONCLUIDO 2026-06-30 — 7 testes P1+P2 cobrindo Sent, HMAC, retry 500/429, UnprotectFailure, fluxo AbacatePay completo e no-redispatch de Sent; adicionou InternalsVisibleTo("PaymentHub.IntegrationTests") em PaymentHub.Worker.csproj; ApplicationWebhookCaptureHandler evoluido com EnqueueResponse + InternalWebhookHmac helper; detalhes em docs/audits/slice-7-it-outbox-dispatcher-e2e-report-2026-06-30.md]
 Slice 7-M1 Outbox multi-instancia: SKIP LOCKED + sweep de Processing orfao  [CONCLUIDO 2026-06-30 — 7 testes E2E (2 OutboxDispatcherConcurrencyTests + 5 OutboxProcessingSweepTests); ClaimPendingForDispatchAsync em transacao unica com FOR UPDATE SKIP LOCKED + UPDATE atomico (nao double-dispatch entre workers); SweepOrphanedProcessingAsync via single ExecuteSqlRawAsync + ProcessingStartedAt; sane-check anti-regressao no Worker; migration 20260630184619_AddOutboxProcessingStartedAtAndIndexes; PaymentHubOptions.OutboxProcessingTimeoutSeconds=900 (default, configuravel); OutboxEvent.ProcessingStartedAt (timestamptz NULL) + WebhookDispatcherCategory.ProcessingOrphaned (8); Worker NAO chama MarkProcessing separado; suite E2E total de Phase 7 = 498 testes; detalhes em docs/audits/slice-7-m1-outbox-multi-instance-report-2026-06-30.md]  
+Slice 2-C.1 Client HTTP real AbacatePay substituindo NoOp para gerenciamento de webhooks  [CONCLUIDO 2026-06-30 — 23 testes (+20 AbacatePayWebhookManagementClientTests unit + 2 ProviderAccountsWebhookControllerTests + 1 AbacatePayWebhookManagementE2ETests); 4-gate pipeline no client (provider check + feature flag + pre-flight validation + apiKey extraction via IProviderAccountCredentialsReader); named HttpClient dedicado `abacatepay-webhooks` (distinto de `abacatepay` que serve transparent-PIX); public IProviderAccountCredentialsReader em Application/Abstractions/Security/ + adapter em Infrastructure.Postgres + `<InternalsVisibleTo Include="PaymentHub.Infrastructure.Postgres" />` no PaymentHub.Application.csproj; NoOpProviderWebhookManagementClient removido; nova categoria AbacatePayErrorCategory.RegistrationDisabled = 11 (nao usada pelo client real; so placeholder); AbacatePayFakeHttpHandler estendido para rotear `/webhooks/create` e `/webhooks/list`; PaymentHubApiFactory wires named client `abacatepay-webhooks`; ProtectAbacatePayCredentials aceita `string?` para webhookSecret; suite E2E total de Phase 2 = 522 testes; detalhes em docs/audits/slice-2c1-abacatepay-webhook-management-client-report-2026-06-30.md]  
 ```
 
 ### Bloco C — Provider AbacatePay (Phase 2) — `CONCLUIDO 2026-06-29`
@@ -156,13 +157,13 @@ Slice 5-C  UI minima de gestao de tenants/applications/provider accounts
 
 | Indicador | Valor atual | Meta |
 |-----------|------------|------|
-| Testes unitarios passando | 467 | >= 64 |
-| Testes de integracao (Postgres real) | 31 (10 Slice 1-IT + 4 Slice 3-IT + 3 Slice 2-C + 7 Slice 7-IT + 2 Slice 7-M1 concurrency + 5 Slice 7-M1 sweep) | >= 5 |
+| Testes unitarios passando | 489 | >= 64 |
+| Testes de integracao (Postgres real) | 33 (10 Slice 1-IT + 4 Slice 3-IT + 3 Slice 2-C + 1 Slice 2-C.1 E2E + 7 Slice 7-IT + 2 Slice 7-M1 concurrency + 5 Slice 7-M1 sweep + 1 vazio Slice 2-C.1 test stub) | >= 5 |
 | Gaps P0 abertos | 0 | 0 |
 | Gaps P1 abertos | **0** | 0 |
-| Gaps P2 abertos | 4 (P2-3 audit log pendente Phase 6; B4-security headers deferred; P2-4 FKs pendente; P2-5 doc HMAC desatualizada pendente; M1-security + C.3-qa RESOLVIDO 2026-06-30 via Slice 7-M1; P2-2 RESOLVIDO 2026-06-30 via Slice 7-IT) | <= 2 |
+| Gaps P2 abertos | 4 (P2-3 audit log pendente Phase 6; B4-security headers deferred; P2-4 FKs pendente; P2-5 doc HMAC desatualizada pendente; M1-security + C.3-qa RESOLVIDO 2026-06-30 via Slice 7-M1; P2-2 RESOLVIDO 2026-06-30 via Slice 7-IT; P2-1 RESOLVIDO 2026-06-30 via Slice 2-C.1) | <= 2 |
 | Build status | Limpo | Limpo |
-| Providers reais funcionais | 1 (AbacatePay PIX sandbox + webhooks externos) | >= 1 (AbacatePay) |
+| Providers reais funcionais | 1 (AbacatePay PIX sandbox + webhooks externos + remote registration) | >= 1 (AbacatePay) |
 
 ---
 

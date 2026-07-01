@@ -298,6 +298,85 @@ public class ProviderAccountsWebhookControllerTests
             Times.Once);
     }
 
+    // -----------------------------------------------------------------
+    // Slice 2-C.1: when the feature flag is off, the handler returns
+    // Success with RemoteRegistrationDeferred. The controller must still
+    // map that to 200 OK and surface the deferred status in the body so
+    // the operator can see what happened. This is the Slice 2-C.1 contract
+    // change versus the no-op default of Slice 2-C.
+    // -----------------------------------------------------------------
+    [Fact]
+    public async Task ConfigureWebhook_ShouldReturnOkWithRemoteRegistrationDeferred_WhenFeatureFlagIsOffAndRegisterRemotelyTrue()
+    {
+        var tenantId = Guid.NewGuid();
+        var applicationId = Guid.NewGuid();
+        var providerAccountId = Guid.NewGuid();
+        _tenantContext.SetupGet(c => c.TenantId).Returns(tenantId);
+        _tenantContext.SetupGet(c => c.ApplicationId).Returns(applicationId);
+        _webhookValidator.Setup(v => v.ValidateAsync(It.IsAny<ConfigureAbacatePayWebhookRequestDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ValidationResult());
+
+        var deferredResponse = NewWebhookResponse(
+            providerAccountId,
+            hasWebhookSecret: true,
+            remoteRegistrationStatus: "RemoteRegistrationDeferred");
+        _configureHandler.Setup(h => h.HandleAsync(
+                tenantId, applicationId, providerAccountId,
+                It.Is<ConfigureAbacatePayWebhookRequestDto>(r => r.RegisterRemotely),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConfigureWebhookOutcome.Success(deferredResponse));
+
+        var controller = NewController();
+        var request = ValidRequest() with { WebhookSecret = "valid-webhook-secret-32-chars-long!", RegisterRemotely = true };
+
+        var result = await controller.ConfigureWebhook(providerAccountId, request, CancellationToken.None);
+
+        var ok = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        ok.StatusCode.Should().Be(200);
+        var responseBody = ok.Value.Should().BeOfType<ProviderAccountWebhookResponseDto>().Subject;
+        responseBody.RemoteRegistrationStatus.Should().Be("RemoteRegistrationDeferred");
+        responseBody.HasWebhookSecret.Should().BeTrue(
+            because: "the local credentials blob carries the new webhookSecret even when remote registration is deferred");
+    }
+
+    // -----------------------------------------------------------------
+    // Slice 2-C.1: when the feature flag is on and the upstream
+    // returns Registered, the handler returns Success with
+    // RemoteRegistrationStatus="Registered". The controller must surface
+    // that string verbatim in the response body so the operator can
+    // distinguish from the deferred / failed outcomes.
+    // -----------------------------------------------------------------
+    [Fact]
+    public async Task ConfigureWebhook_ShouldReturnOkWithRegisteredStatus_WhenAllGatesPass()
+    {
+        var tenantId = Guid.NewGuid();
+        var applicationId = Guid.NewGuid();
+        var providerAccountId = Guid.NewGuid();
+        _tenantContext.SetupGet(c => c.TenantId).Returns(tenantId);
+        _tenantContext.SetupGet(c => c.ApplicationId).Returns(applicationId);
+        _webhookValidator.Setup(v => v.ValidateAsync(It.IsAny<ConfigureAbacatePayWebhookRequestDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ValidationResult());
+
+        var registeredResponse = NewWebhookResponse(
+            providerAccountId,
+            hasWebhookSecret: true,
+            remoteRegistrationStatus: "Registered");
+        _configureHandler.Setup(h => h.HandleAsync(
+                tenantId, applicationId, providerAccountId,
+                It.IsAny<ConfigureAbacatePayWebhookRequestDto>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConfigureWebhookOutcome.Success(registeredResponse));
+
+        var controller = NewController();
+        var request = ValidRequest() with { WebhookSecret = "valid-webhook-secret-32-chars-long!", RegisterRemotely = true };
+
+        var result = await controller.ConfigureWebhook(providerAccountId, request, CancellationToken.None);
+
+        var ok = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var responseBody = ok.Value.Should().BeOfType<ProviderAccountWebhookResponseDto>().Subject;
+        responseBody.RemoteRegistrationStatus.Should().Be("Registered");
+    }
+
     // ---- helpers ----
 
     private ProviderAccountsController NewController()
@@ -319,14 +398,20 @@ public class ProviderAccountsWebhookControllerTests
         RegisterRemotely: false);
 
     private static ProviderAccountWebhookResponseDto NewWebhookResponse(Guid providerAccountId) =>
+        NewWebhookResponse(providerAccountId, hasWebhookSecret: false, remoteRegistrationStatus: "NotRegistered");
+
+    private static ProviderAccountWebhookResponseDto NewWebhookResponse(
+        Guid providerAccountId,
+        bool hasWebhookSecret,
+        string remoteRegistrationStatus) =>
         new(
             ProviderAccountId: providerAccountId,
             ProviderCode: ProviderCode.AbacatePay,
             Environment: ProviderEnvironment.Sandbox,
             CallbackUrl: ValidCallbackUrl,
             Events: new[] { "transparent.completed", "transparent.refunded" },
-            HasWebhookSecret: false,
-            RemoteRegistrationStatus: "NotRegistered",
+            HasWebhookSecret: hasWebhookSecret,
+            RemoteRegistrationStatus: remoteRegistrationStatus,
             ConfiguredAt: DateTime.UtcNow,
             UpdatedAt: DateTime.UtcNow);
 }

@@ -35,5 +35,17 @@ public enum AbacatePayErrorCategory
     Unexpected = 9,
 
     /// <summary>Simulation endpoint was called while <c>AllowDevModeSimulation=false</c>. Not retriable.</summary>
-    SimulationDisabled = 10
+    SimulationDisabled = 10,
+
+    /// <summary>
+    /// Slice 2-C.1: the operator has not opted in to remote webhook
+    /// registration (i.e. <c>Providers:AbacatePay:AllowWebhookRegistration</c>
+    /// is <c>false</c>) but the handler nevertheless attempted to call the
+    /// upstream. <see cref="AbacatePayWebhookManagementClient"/> returns this
+    /// category when it is called with the feature flag off — the safer
+    /// default in <c>ConfigureProviderAccountWebhookHandler</c> is to never
+    /// call the client, but if a future slice bypasses that gate the
+    /// category makes the misconfiguration visible.
+    /// </summary>
+    RegistrationDisabled = 11
 }

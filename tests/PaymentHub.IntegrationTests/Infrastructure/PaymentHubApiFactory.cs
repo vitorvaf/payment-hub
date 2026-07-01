@@ -81,13 +81,19 @@ public sealed class PaymentHubApiFactory : WebApplicationFactory<Program>
     /// Returns the protected credential blob that, when unprotected with
     /// <see cref="AesCredentialProtector"/> (the same key the API uses),
     /// yields the JSON <c>{ "apiKey": "...", "webhookSecret": "..." }</c>
-    /// expected by the AbacatePay adapter.
+    /// expected by the AbacatePay adapter. The <paramref name="webhookSecret"/>
+    /// is optional — pass <c>null</c> to seed an account that has only
+    /// an apiKey (the typical pre-2-C onboarding shape, where the
+    /// merchant first registers a webhook secret via the configure
+    /// endpoint).
     /// </summary>
-    public string ProtectAbacatePayCredentials(string apiKey, string webhookSecret)
+    public string ProtectAbacatePayCredentials(string apiKey, string? webhookSecret)
     {
         using var scope = Services.CreateScope();
         var protector = scope.ServiceProvider.GetRequiredService<PaymentHub.Application.Abstractions.Security.ICredentialProtector>();
-        var json = $"{{\"apiKey\":\"{apiKey}\",\"webhookSecret\":\"{webhookSecret}\"}}";
+        var json = string.IsNullOrEmpty(webhookSecret)
+            ? $"{{\"apiKey\":\"{apiKey}\"}}"
+            : $"{{\"apiKey\":\"{apiKey}\",\"webhookSecret\":\"{webhookSecret}\"}}";
         return protector.Protect(json);
     }
 
@@ -221,6 +227,11 @@ RESTART IDENTITY CASCADE;";
                 ["Providers:AbacatePay:BaseUrl"] = "https://abacatepay.fake/v2",
                 ["Providers:AbacatePay:TimeoutSeconds"] = "5",
                 ["Providers:AbacatePay:AllowDevModeSimulation"] = "true",
+                // Slice 2-C.1: enable remote registration so the E2E test
+                // for `POST /webhooks/create` exercises the real client.
+                // Default in production is `false`; only the E2E factory
+                // flips it on.
+                ["Providers:AbacatePay:AllowWebhookRegistration"] = "true",
 
                 // Bootstrap seeder is OFF in every test. The Slice 6-D
                 // policy enforces this — without it the dev tenant would
@@ -244,6 +255,14 @@ builder.ConfigureTestServices(services =>
             // registration order and the last PrimaryHandler assignment
             // takes effect.
             services.AddHttpClient(PaymentHub.Infrastructure.Providers.AbacatePay.AbacatePayClient.HttpClientName)
+                .ConfigurePrimaryHttpMessageHandler(() => _abacateHandler);
+
+            // Slice 2-C.1: register the AbacatePayWebhookManagementClient
+            // named HttpClient with the same fake. The fake now routes
+            // /webhooks/create and /webhooks/list to webhook-management
+            // envelopes; transparent-PIX requests still get the existing
+            // PENDING envelope.
+            services.AddHttpClient(PaymentHub.Infrastructure.Providers.AbacatePay.AbacatePayWebhookManagementClient.HttpClientName)
                 .ConfigurePrimaryHttpMessageHandler(() => _abacateHandler);
 
             services.AddHttpClient(PostgresServiceCollectionExtensions.ApplicationWebhookHttpClientName)

@@ -233,8 +233,10 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | 9 | 9-O1 | Anti-Regression | `webhookSecret` continua sem coluna propria (Slice 2-C) | Auditado | Sem coluna | `PASS` | 2026-07-01 (Slice 9-O1) |
 | 9 | 9-O1 | Anti-Regression | `OutboxEvent.LastError` continua apenas categoria enum (Slice 7-A.7) | Auditado em `OutboxEvent.MarkRetryWithStatus`/`MarkFailedWithStatus` | Apenas enum | `PASS` | 2026-07-01 (Slice 9-O1) |
 | 9 | 9-O1 | Migration | `20260701000001_AddObservabilityColumns` | Adiciona `correlation_id VARCHAR(64) NULL` em `webhook_events` e `outbox_events`, sem `webhookSecret`, sem `jsonb` | Migration criada; diff manual | `PASS` | 2026-07-01 (Slice 9-O1) |
-| 9 | 9-O1 | E2E | `dotnet test --filter FullyQualifiedName~CorrelationIdE2ETests` | Cobre checkout->response header + inbound webhook propagation | 2 testes adicionados (NÃO EXECUTADOS por falta de Docker nesta sessao) | `PENDING` | 2026-07-01 (Slice 9-O1 — E2E pendente requer Docker) |
-| 9 | 9-O1 | Docs | `docs/audits/slice-9-o1-observability-minimal-report-2026-07-01.md` | Relatorio final + Q1-Q4 respondidas + gaps remanescentes | A criar | `PENDING` | 2026-07-01 (Slice 9-O1 — audit report) |
+| 9 | 9-O1 | E2E | `dotnet test --filter FullyQualifiedName~CorrelationIdE2ETests` | Cobre generate/preserve/replace/dedup do X-Correlation-Id via GET /health (anonymous, real WebApplicationFactory + Testcontainers) | 4 testes passando | `PASS` | 2026-07-01 (Slice 9-O1.IT) |
+| 9 | 9-O1.IT | Full integration suite | `dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj` | 33 baseline (Slice 3-IT + 7-IT + 7-M1 + 1-IT + 2-C + 2-C.1) + 4 novos 9-O1.IT = 37 testes | 37/37 PASS (12.0s) | `PASS` | 2026-07-01 (Slice 9-O1.IT) |
+| 9 | 9-O1.IT | Anti-Leak Migration | Migration `20260701000001_AddObservabilityColumns` agora tem BOTH `.cs` (body) AND `.Designer.cs` (BuildTargetModel snapshot) | Designer.cs criado copiando `20260630184619` template + inserindo 2 property mappings (correlation_id VARCHAR(64) NULL em outbox_events + webhook_events) | `PASS` | 2026-07-01 (Slice 9-O1.IT — bug fix in commit aaa9ea5) |
+| 9 | 9-O1.IT | Docs | `docs/audits/slice-9-o1-it-correlationid-e2e-report-2026-07-01.md` | Relatorio curto: 4 testes, designer.cs gotcha, validacoes 547+37=584 testes, anti-regression preservadas | Criado | `PASS` | 2026-07-01 (Slice 9-O1.IT) |
 
 ---
 

@@ -960,3 +960,81 @@ Registre entradas concluídas abaixo quando fizer sentido manter rastreabilidade
 - Validacoes planejadas: `scripts/agent-verify.sh`, `dotnet restore`, `dotnet build --no-restore`, `dotnet test --no-build --logger "trx;LogFilePrefix=test-results" --results-directory TestResults`.
 - Validacoes executadas: `scripts/agent-verify.sh` passou; `dotnet restore` passou; `dotnet build --no-restore` passou com 0 warnings/0 errors; `dotnet test --no-build --logger "trx;LogFilePrefix=test-results" --results-directory TestResults` passou com 106 testes unitarios e gerou arquivos `.trx`.
 - Riscos residuais: CI ainda nao executa testes de integracao reais, E2E, deploy ou validacao com banco real; o scan de secrets e simples e nao substitui ferramenta dedicada.
+
+### 2026-07-01 - Slice 9-O1.IT — CorrelationId E2E com Docker/Testcontainers
+
+Status: IMPLEMENTING
+
+## Objetivo
+
+Validar em integracao (Testcontainers Postgres + WebApplicationFactory + HttpClient real) que o `CorrelationIdMiddleware` retorna `X-Correlation-Id` em responses HTTP reais e preserva valores validos enviados pelo client. Fechar a unica pendencia direta do Slice 9-O1 (audit report linhas 201-205, validation-matrix linhas 235-237).
+
+## Discovery
+
+### Estado atual do CorrelationIdMiddleware
+
+`src/PaymentHub.Api/Auth/CorrelationIdMiddleware.cs` (86 linhas). Comportamento confirmado:
+
+- Le header `X-Correlation-Id` via `Request.Headers.TryGetValue`.
+- `IsValid(candidate)`: regex `^[A-Za-z0-9\-]{8,128}$` (definida em `CorrelationIdGenerator.Pattern`).
+- Valido: `accessor.Set(resolved)` + `Items["correlationId"] = resolved` + `Response.Headers["X-Correlation-Id"] = resolved` + `LogContext.PushProperty(...)` + `await _next(context)`.
+- Invalido (ou ausente): loga `observability.correlation_id_generated` com `Request.Path` APENAS (NAO o valor candidato, anti log injection), gera `CorrelationIdGenerator.New()` = `Guid.NewGuid().ToString("N")` (32 hex).
+- Middleware registrado em `Program.cs:131` ANTES de `ApiKeyAuthenticationMiddleware` (line 133). Garante 401/403 responses carregarem `X-Correlation-Id`.
+
+### Estado atual do CorrelationIdGenerator
+
+`src/PaymentHub.Application/Observability/CorrelationIdGenerator.cs` (74 linhas). API publica:
+
+- `HeaderName = "X-Correlation-Id"` (const).
+- `HttpContextItemsKey = "correlationId"`.
+- `MinLength = 8`, `MaxLength = 128`.
+- `New()` -> `Guid.NewGuid().ToString("N")` (32 hex chars).
+- `IsValid(string?)` -> regex `^[A-Za-z0-9\-]{8,128}$`, never throws, never logs.
+
+### Estado atual do PaymentHubApiFactory
+
+`tests/PaymentHub.IntegrationTests/Infrastructure/PaymentHubApiFactory.cs` (322 linhas). API para reuso:
+
+- `protected override IHost CreateHost(IHostBuilder builder)` com `ConfigureHostConfiguration` para `ConnectionStrings:Postgres` (Testcontainers).
+- `protected override void ConfigureWebHost(IWebHostBuilder builder)` com `ConfigureAppConfiguration` (overrides `PaymentHub:*` + `Providers:AbacatePay:*`) + `ConfigureTestServices` (substitui `abacatepay` + `abacatepay-webhooks` + `application-webhook` por fakes).
+- `ResetDatabaseAsync()`: TRUNCATE em ordem topologica reversa (CASCADE).
+- `CreateDbContext()`: helper para assertions.
+- `ResolveScoped<T>()` + `ResolveScopedWithLifetime<T>()`: helpers DI.
+
+### Endpoints candidatos para teste
+
+- **`GET /health`**: anonimo (`IsAnonymousPath` em `ApiKeyAuthenticationMiddleware.cs:126`), NAO tem controller mapeado (`Program.cs:135` so tem `MapControllers()`), retorna 404. **A escolha preferida**: middleware corre antes do routing, response carrega `X-Correlation-Id` mesmo em 404. Sem side effects, sem seed necessario.
+- `GET /`: tambem anonimo, mesma logica.
+- `POST /api/v1/webhooks/Fake`: anonimo, persiste `WebhookEvent` (side effect: INSERT). Fora de escopo (introduz dependencia de DB write).
+- `GET /swagger`: requer setup do Swashbuckle; pode ou nao estar exposto em `Production` (env name = `Production` no factory).
+
+### Testes previstos
+
+1. `Response_ShouldContainGeneratedCorrelationId_WhenRequestDoesNotProvideOne`
+   - `GET /health` sem header. Assert: response contem `X-Correlation-Id` com valor nao-vazio + regex match + header unico.
+2. `Response_ShouldPreserveCorrelationId_WhenRequestProvidesValidHeader`
+   - `GET /health` com `X-Correlation-Id: test-correlation-123456`. Assert: response tem mesmo valor + header unico.
+3. `Response_ShouldReplaceInvalidCorrelationId_WhenRequestProvidesInvalidHeader`
+   - `GET /health` com `X-Correlation-Id: !!@@##`. Assert: response tem valor diferente, valido pela regex.
+
+### Riscos e gaps
+
+- **Docker NAO disponivel nesta sessao** (sessoes anteriores do 9-O1 ja documentaram). Os testes serao compilados + lint validados, mas a execucao completa da suite de integracao (24 baseline + 2 novos = 26 testes com Testcontainers) so podera ser validada em sessao com Docker.
+- **Anti-flaky em container startup**: Testcontainers.PostgreSql 4.12.0 e estavel, mas o primeiro start pode levar 10-30s. Nao e responsabilidade desta slice.
+- **Reuso de factory por teste**: o padrao Slice 7-IT/3-IT usa `new PaymentHubApiFactory(_postgres)` por teste, nao compartilhado. Razao: fakes perdem isolamento (CallCount, _last).
+- **Middleware order re-asserted**: Test 1 com header ausente confirma que o middleware gera valor valido; ordem correta (CorrelationId ANTES de ApiKey) garante que mesmo 401 responses carregam o header (decisao Slice 9-O1.1 #1).
+
+## Plano de execucao
+
+1. Criar `tests/PaymentHub.IntegrationTests/EndToEnd/CorrelationIdE2ETests.cs` com 3 testes `[Fact]`:
+   - Collection `PostgresCollection` (factory por teste).
+   - `factory.CreateClient()` + `factory.DisposeAsync()` em try/finally.
+   - Assertions via `FluentAssertions` em `HttpResponseMessage.Headers` + `CorrelationIdGenerator.IsValid`.
+2. Validar: `dotnet build` (0/0); `dotnet test PaymentHub.UnitTests` (547/547 PASS, sem regressao).
+3. Atualizar `agent-progress.md` (esta entrada) + `docs/harness/validation-matrix.md` + `docs/harness/learnings.md` + `docs/roadmap/002-phase-status-board.md` + `feature_list.md` (PH-OBS-006 novo).
+4. Criar audit report `docs/audits/slice-9-o1-it-correlationid-e2e-report-2026-07-01.md`.
+5. Commit.
+
+## Proxima slice recomendada
+
+- **Slice 9-O2 — Instrumentacao ativa nos handlers/workers**: wire `PaymentHubMetrics` em `CreateCheckoutHandler` / `ProviderWebhooksController` / `ProcessWebhookEventHandler` / `OutboxDispatcherWorker` / `ApiKeyAuthenticationMiddleware`. Ja documentada em `feature_list.md` (PH-OBS-004).

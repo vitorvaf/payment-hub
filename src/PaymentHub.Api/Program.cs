@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using PaymentHub.Api.Auth;
 using PaymentHub.Application.Abstractions.Bootstrap;
 using PaymentHub.Application.Abstractions.Context;
+using PaymentHub.Application.Abstractions.Observability;
 using PaymentHub.Application.Abstractions.Providers;
 using PaymentHub.Application.Bootstrap;
 using PaymentHub.Application.Checkouts;
@@ -58,6 +59,13 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 builder.Services.AddHttpContextAccessor();
+
+// Slice 9-O1.1 — request-scoped CorrelationId accessor. The middleware
+// (CorrelationIdMiddleware) populates HttpContext.Items["correlationId"]
+// and pushes it onto the Serilog LogContext so every log line in the
+// request scope carries the value. Registered as Scoped because it reads
+// from IHttpContextAccessor.
+builder.Services.AddScoped<ICorrelationIdAccessor, HttpCorrelationIdAccessor>();
 
 builder.Services.AddPaymentHubPostgres(builder.Configuration);
 builder.Services.AddPaymentHubProviders(builder.Configuration);
@@ -114,6 +122,13 @@ app.UseExceptionHandler(handler => handler.Run(async context =>
 
     await context.Response.WriteAsJsonAsync(payload);
 }));
+
+// Slice 9-O1.1 — register the CorrelationId middleware BEFORE
+// ApiKeyAuthenticationMiddleware so 401/403 logs (and the response header)
+// always carry X-Correlation-Id, even for rejected requests. Order matters:
+// the middleware pushes the id onto the Serilog LogContext via PushProperty
+// before the auth middleware logs anything.
+app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.UseMiddleware<ApiKeyAuthenticationMiddleware>();
 

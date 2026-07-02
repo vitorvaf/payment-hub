@@ -21,7 +21,7 @@ public sealed class OutboxPublisher : IOutboxPublisher
         CancellationToken cancellationToken)
     {
         var outboxEventId = Guid.NewGuid();
-        await EnqueueAsync(outboxEventId, tenantId, applicationId, eventType, @event, cancellationToken);
+        await EnqueueAsync(outboxEventId, tenantId, applicationId, eventType, @event, correlationId: null, cancellationToken);
         return outboxEventId;
     }
 
@@ -33,13 +33,39 @@ public sealed class OutboxPublisher : IOutboxPublisher
         TEvent @event,
         CancellationToken cancellationToken)
     {
+        await EnqueueAsync(outboxEventId, tenantId, applicationId, eventType, @event, correlationId: null, cancellationToken);
+    }
+
+    public async Task<Guid> EnqueueAsync<TEvent>(
+        Guid tenantId,
+        Guid applicationId,
+        string eventType,
+        TEvent @event,
+        string? correlationId,
+        CancellationToken cancellationToken)
+    {
+        var outboxEventId = Guid.NewGuid();
+        await EnqueueAsync(outboxEventId, tenantId, applicationId, eventType, @event, correlationId, cancellationToken);
+        return outboxEventId;
+    }
+
+    public async Task EnqueueAsync<TEvent>(
+        Guid outboxEventId,
+        Guid tenantId,
+        Guid applicationId,
+        string eventType,
+        TEvent @event,
+        string? correlationId,
+        CancellationToken cancellationToken)
+    {
         var payload = JsonSerializer.Serialize(@event);
         var outbox = new OutboxEvent(
             outboxEventId,
             tenantId,
             applicationId,
             eventType,
-            payload);
+            payload,
+            correlationId);
         await _repository.AddAsync(outbox, cancellationToken);
     }
 }

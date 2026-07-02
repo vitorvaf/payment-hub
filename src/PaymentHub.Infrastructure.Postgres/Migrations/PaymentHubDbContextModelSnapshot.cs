@@ -243,6 +243,14 @@ namespace PaymentHub.Infrastructure.Postgres.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("application_id");
 
+                    // Slice 9-O1.2: request-scoped correlation id propagated
+                    // from the inbound HTTP request. Mirrors the column added
+                    // by migration 20260701000001_AddObservabilityColumns.
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("correlation_id");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -595,6 +603,15 @@ namespace PaymentHub.Infrastructure.Postgres.Migrations
                     b.Property<Guid?>("ApplicationId")
                         .HasColumnType("uuid")
                         .HasColumnName("application_id");
+
+                    // Slice 9-O1.2: request-scoped correlation id captured at
+                    // the inbound controller edge by CorrelationIdMiddleware.
+                    // Mirrors the column added by migration
+                    // 20260701000001_AddObservabilityColumns.
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("correlation_id");
 
                     b.Property<string>("EventType")
                         .IsRequired()

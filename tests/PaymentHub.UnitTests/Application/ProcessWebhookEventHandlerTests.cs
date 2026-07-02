@@ -83,6 +83,7 @@ public class ProcessWebhookEventHandlerTests
                 It.IsAny<Guid>(),
                 It.IsAny<string>(),
                 It.IsAny<object>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var uow = new Mock<IUnitOfWork>();
@@ -121,6 +122,7 @@ public class ProcessWebhookEventHandlerTests
             tenantId, appId,
             "payment.approved",
             It.IsAny<object>(),
+            It.IsAny<string?>(),
             It.IsAny<CancellationToken>()), Times.Once);
         adapter.Verify(a => a.ParseWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -182,6 +184,7 @@ public class ProcessWebhookEventHandlerTests
             It.IsAny<Guid>(),
             It.IsAny<string>(),
             It.IsAny<object>(),
+            It.IsAny<string?>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -226,6 +229,7 @@ public class ProcessWebhookEventHandlerTests
                 It.IsAny<Guid>(),
                 It.IsAny<string>(),
                 It.IsAny<object>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -301,6 +305,7 @@ public class ProcessWebhookEventHandlerTests
                 It.IsAny<Guid>(),
                 It.IsAny<string>(),
                 It.IsAny<object>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 

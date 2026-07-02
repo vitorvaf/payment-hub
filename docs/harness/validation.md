@@ -161,3 +161,30 @@ Quando a slice cobre claim transacional com `FOR UPDATE SKIP LOCKED`, sweep auto
 - **Suite esperada apos Slice 7-M1: 498 testes (467 unit + 31 integration).** Regressao de teste count abaixo de 495 indica quebra em alguma das suites. Regressao acima de 500 indica teste novo nao contabilizado.
 - **Configuracao:** `PaymentHubOptions.OutboxProcessingTimeoutSeconds` (default 900). Documentar override em `appsettings.json` se o ambiente tiver SLO de entrega apertado. Suite E2E passa `Options.Create(new PaymentHubOptions { OutboxProcessingTimeoutSeconds = 1 })` para exercitar o sweep em escala de teste.
 - **Anti-flaky em testes de concorrencia:** se P1.1 (`ShouldNotDoubleDispatch_WhenTwoInstancesRunConcurrently`) flake-ar, adicionar `await Task.Delay(10)` entre os dois `DispatchOnceAsync` para que o primeiro worker tenha chance de claimar primeiro. Ainda exercita SKIP LOCKED (segundo worker ve a lock) sem a corrida rara de microsegundo.
+
+## Slice-specific (Phase 9 / Slice 9-O1 — Observabilidade minima: CorrelationId, metrics, logs estruturados)
+
+Quando a slice introduz o catalogo `PaymentHubLogEvents`, instruments `PaymentHubMetrics`, helper `CorrelationIdGenerator`, middleware `CorrelationIdMiddleware`, ou qualquer mudanca em `webhook_events.correlation_id` / `outbox_events.correlation_id`:
+
+- **`CorrelationIdMiddleware` DEVE ser registrado ANTES de `ApiKeyAuthenticationMiddleware`** em `Program.cs`. A ordem garante que logs de 401/403 carreguem `CorrelationId` no `LogContext` e que o response de rejeicao sempre inclua o header `X-Correlation-Id`. Confirmar visualmente em `src/PaymentHub.Api/Program.cs`.
+- **Header `X-Correlation-Id` inbound invalido e' substituído silenciosamente** (NAO retorna `400`). `CorrelationIdMiddleware` loga `observability.correlation_id_generated` APENAS com `Request.Path` — NUNCA com o valor recebido (anti-log-injection). Confirmar com `NoLeakLogTests` + `CorrelationIdMiddlewareTests.InvokeAsync_ShouldNotLogTheRejectedValue_WhenSubstituting`.
+- **`CorrelationId` em si NAO e' dado sensivel** (e' um GUID-N opaco gerado pelo gateway). Pode ser persistido em `correlation_id VARCHAR(64) NULL` e propagado no header outbound. NAO confunda com `apiKey`/`tenantId`/`applicationId` (esses continuam off-limits em logs e headers outbound).
+- **Coluna `correlation_id` permanece `character varying(64) NULL`** em `webhook_events` e `outbox_events`. Cap em Domain via `NormalizeCorrelationId` (constante local `MaxLength = 64`). Migration `20260701000001_AddObservabilityColumns` NAO deve ser alterada por slices subsequentes.
+- **`outbox_events.payload` continua `jsonb`** (decisao Slice 7-IT). **`webhook_events.raw_payload` continua `text`** (decisao Slice 3-IT). **`provider_accounts.webhook_events` continua `text`** (decisao Slice 2-C). CorrelationId NAO substitui payload — vai em coluna propria.
+- **`PaymentHubMetrics.Tag(...)` rejeita em runtime chaves fora de `AllowedTagKeys`**: `provider`, `operation`, `status`, `error_category`, `event_type`, `environment`, `worker`. Adicionar nova chave exige edicao explicita da whitelist. `apiKey`/`webhookSecret`/`rawPayload`/`signature`/`body`/`Authorization` NUNCA serao tag values.
+- **Anti-leak regex gate** em `scripts/agent-docs-check.sh` falha o build quando o regex encontra `Log(Warning|Information|Error|Debug|Critical|Trace)\(...` interpolando os tokens `apiKey`, `webhookSecret`, `rawPayload`, `signature`, `Authorization`, `body`. Atualizar o regex gate E o array `ForbiddenTokens` em `NoLeakLogTests.cs` ao adicionar nova categoria sensivel.
+- **`PaymentHubLogEvents` e' a unica fonte canonica** de event names. Chamadas `_logger.LogInformation("checkout.accepted...")` com strings ad-hoc sao proibidas — use `PaymentHubLogEvents.CheckoutAccepted` como template ou componha com `$"{PaymentHubLogEvents.CheckoutAccepted} paymentId={SafeLog.Id(payment.Id)}"`.
+- **Worker NAO tem `HttpContext`**, portanto registra `NullCorrelationIdAccessor` (Singleton, retorna null). O fluxo do worker deriva `CorrelationId` da coluna `webhook_events.correlation_id` / `outbox_events.correlation_id` via accessor passado para o handler. NAO injetar `IHttpContextAccessor` no Worker (quebra o `scripts/agent-architecture-check.sh`).
+- **Filtros de teste cobrem os caminhos novos:**
+  ```bash
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~CorrelationId"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~SafeLog"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~PaymentHubMetrics"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~NoLeak"
+  dotnet test PaymentHub.slnx --filter "FullyQualifiedName~ProviderWebhooks"
+  ```
+- **Suite esperada apos Slice 9-O1: 547 testes (523 unit + 24 integration).** Regressao abaixo de 540 indica quebra em alguma das suites. Regressao acima de 555 indica teste novo nao contabilizado (esperado: instrumentacao ativa em 9-O2+).
+- **Migration nova NAO cria coluna para `webhookSecret`** (re-asserting Slice 2-C). Confirmar via `dotnet ef migrations list` + diff visual.
+- **`OutboxEvent.LastError` continua persistindo apenas categoria enum + status code** (decisao Slice 7-A.7). O novo `correlation_id` NAO substitui `LastError` — sao colunas ortogonais.
+- **`HttpApplicationWebhookDispatcher` adiciona `X-Correlation-Id` no request outbound** derivado de `outboxEvent.CorrelationId`. NUNCA adicione `Authorization`/`X-Api-Key` no request ao consumidor (esse header nao existe — o consumidor assina o body com o segredo armazenado em `ApplicationClient.WebhookSecret`).
+- **Anti-flaky em testes E2E de correlation:** se o teste `CorrelationIdE2ETests.ShouldPropagateInboundCorrelationId_ToOutboxRow` flake-ar, confirmar que `CorrelationIdMiddleware` esta' registrado na ordem correta em `Program.cs`. Sem isso o accessor retorna null e o teste falha com `Should().Be(seededId)`.

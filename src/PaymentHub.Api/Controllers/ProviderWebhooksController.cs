@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using PaymentHub.Application.Abstractions.Observability;
+using PaymentHub.Application.Observability;
 using PaymentHub.Application.Webhooks;
 using PaymentHub.Infrastructure.Providers.AbacatePay;
 using PaymentHub.Infrastructure.Providers.AbacatePay.Webhooks;
@@ -11,13 +13,16 @@ namespace PaymentHub.Api.Controllers;
 public class ProviderWebhooksController : ControllerBase
 {
     private readonly IReceiveProviderWebhookHandler _handler;
+    private readonly ICorrelationIdAccessor _correlationIdAccessor;
     private readonly ILogger<ProviderWebhooksController> _logger;
 
     public ProviderWebhooksController(
         IReceiveProviderWebhookHandler handler,
+        ICorrelationIdAccessor correlationIdAccessor,
         ILogger<ProviderWebhooksController> logger)
     {
         _handler = handler;
+        _correlationIdAccessor = correlationIdAccessor;
         _logger = logger;
     }
 
@@ -73,10 +78,16 @@ public class ProviderWebhooksController : ControllerBase
         if (string.IsNullOrWhiteSpace(eventType))
             eventType = "payment.updated";
 
+        // Slice 9-O1.2: capture the resolved correlation id so the inbox
+        // processor (and any downstream outbox row it creates) carries the
+        // same value end-to-end. The middleware already populated the
+        // accessor and pushed the value onto the Serilog LogContext.
+        var correlationId = _correlationIdAccessor.CorrelationId;
+
         try
         {
             var webhookId = await _handler.HandleAsync(
-                providerCode, eventType!, rawBody, providerEventId, signature, cancellationToken);
+                providerCode, eventType!, rawBody, providerEventId, signature, correlationId, cancellationToken);
             return Accepted(new { webhookId });
         }
         catch (InvalidOperationException ex)

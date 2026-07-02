@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using PaymentHub.Application.Abstractions.Observability;
 using PaymentHub.Application.Abstractions.Security;
 using PaymentHub.Application.Checkouts;
 using PaymentHub.Application.Payments;
@@ -31,6 +32,12 @@ public class Program
 
             builder.Services.AddPaymentHubPostgres(builder.Configuration);
             builder.Services.AddPaymentHubProviders(builder.Configuration);
+
+            // Slice 9-O1.1 — the worker has no HttpContext, so it uses a no-op
+            // accessor. Real correlation ids surface from the persisted
+            // webhook_events.correlation_id / outbox_events.correlation_id
+            // columns (slice 9-O1.2) and the dispatcher reads them directly.
+            builder.Services.AddSingleton<ICorrelationIdAccessor, NullCorrelationIdAccessor>();
 
             builder.Services.AddScoped<IRegisterTenantHandler, RegisterTenantHandler>();
             builder.Services.AddScoped<IRegisterApplicationClientHandler, RegisterApplicationClientHandler>();

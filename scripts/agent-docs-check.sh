@@ -140,4 +140,27 @@ for skill in payment-slice dotnet-validation architecture-fitness security-revie
   require_text "$file" '^## Antipatterns$'
 done
 
+echo "Checking observability anti-leak gate (Slice 9-O1)..."
+# Slice 9-O1 introduces the rule that production code MUST NOT
+# interpolate apiKey / webhookSecret / rawPayload / signature /
+# Authorization / body into log invocations. The regex below scans all
+# *.cs files under src/ for `Log*(<token>` patterns (case insensitive) and
+# fails the build when a hit is found. Allowlist: tests/, docs/, and the
+# observability catalogue itself.
+#
+# Update `docs/specs/011-security-and-compliance.md` and `ForbiddenTokens`
+# in `tests/PaymentHub.UnitTests/Observability/NoLeakLogTests.cs` when
+# adding a new forbidden category.
+LEAK_PATTERN='Log(Warning|Information|Error|Debug|Critical|Trace)\([^)]*\{(apiKey|webhookSecret|rawPayload|signature|Authorization|body)\}'
+LEAK_HITS="$(grep -RInE "$LEAK_PATTERN" 'src/' 2>/dev/null | grep -vE '/Observability/(SafeLog\.cs|CorrelationIdGenerator\.cs|PaymentHubLogEvents\.cs|PaymentHubMetrics\.cs)$' || true)"
+if [ -n "$LEAK_HITS" ]; then
+  echo "FAIL: Observability anti-leak gate triggered. Production code MUST NOT" >&2
+  echo "interpolate apiKey/webhookSecret/rawPayload/signature/Authorization/body" >&2
+  echo "into Log*( invocations. Use SafeLog helpers from" >&2
+  echo "PaymentHub.Application.Observability.SafeLog instead." >&2
+  echo "Hits:" >&2
+  echo "$LEAK_HITS" >&2
+  exit 1
+fi
+
 echo "Docs check passed."

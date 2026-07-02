@@ -583,3 +583,42 @@ Adicionada ao Stack de Conhecimento (Slice 3-IT ja tinha documentado para `webho
 - `provider_accounts.webhook_events` tem que permanecer como `text`.
 - Qualquer nova coluna que armazene JSON e que possa ser rodada byte-exact round-trip (ex.: `webhookSecret` em `encrypted_credentials` embora esse ja seja `text` por outro motivo) NAO pode ser `jsonb`.
 - Reverter essa coluna para `jsonb` em nova migration quebra `ProviderAccountWebhookPersistenceTests.ProviderAccount_ShouldPersistAllWebhookConfigurationColumns` com `"Expected [...].WebhookEvents to be '[...]' with a length of 48, but '[...]' has a length of 49, differs near " t""`.
+
+### Observabilidade anti-vazamento (Slice 9-O1, 2026-07-01)
+
+A slice 9-O1 introduz o catalogo `PaymentHubLogEvents` + helpers `SafeLog`
++ gate regex em `scripts/agent-docs-check.sh`. As regras abaixo reforcam a
+politica "logs nunca carregam segredo" da secao `Regras obrigatorias`
+acima:
+
+- O codigo de producao NAO pode chamar `Log(Warning|Information|Error|Debug|Critical|Trace)`
+  interpolando tokens `apiKey`, `webhookSecret`, `rawPayload`, `signature`,
+  `Authorization`, `body`. O gate `scripts/agent-docs-check.sh` falha o
+  build quando o regex encontra um hit. `NoLeakLogTests` (reflection) cobre
+  a mesma propriedade em runtime.
+- Mensagens de log devem usar SOMENTE:
+  - Identificadores truncados via `SafeLog.Id(Guid?)` (8 primeiros chars).
+  - Comprimento via `SafeLog.Length(string?)` (sem conteudo).
+  - Booleanos canonicos via `SafeLog.Flag(label, bool?)`.
+  - Categorias enum via `SafeLog.Category<TEnum>(TEnum)`.
+- `OutboxEvent.LastError` continua persistindo apenas categoria enum + status
+  code (decisao Slice 7-A.7). NAO `ex.Message`, URL, body, signature, stack.
+- `WebhookEvent.LastError` e sanitizado por `ProcessWebhookEventHandler.Sanitize`
+  (Slice 2-B): remove `\r`/`\n`/`\0` e limita a 2000 chars.
+- O middleware de CorrelationId (`CorrelationIdMiddleware`) NAO loga o valor
+  recebido quando rejeita um header invalido. Loga apenas a observacao
+  `observability.correlation_id_generated` com o path da request, NAO o
+  valor. O `NoLeakLogTests.NoLeak_ShouldNotLogRejectedCorrelationIdValue`
+  cobre esta propriedade.
+- Tag whitelist em `PaymentHubMetrics.AllowedTagKeys` rejeita em runtime
+  qualquer chave de tag fora de: `provider`, `operation`, `status`,
+  `error_category`, `event_type`, `environment`, `worker`. NAO HA chave
+  que exponha `apiKey`/`webhookSecret`/`rawPayload`/`signature`/`body`/
+  `Authorization`. Adicionar uma nova chave exige edicao explicita da
+  whitelist.
+- `CorrelationId` em si NAO e dado sensivel (identificador opaco gerado
+  pelo gateway, sem semantica de tenant ou application), por isso e
+  persistido em `webhook_events.correlation_id` e `outbox_events.correlation_id`
+  e propagado no header `X-Correlation-Id`. Nao confunda com `apiKey`,
+  `tenantId` ou `applicationId` (esses NAO vao em logs nem em headers
+  outbound).

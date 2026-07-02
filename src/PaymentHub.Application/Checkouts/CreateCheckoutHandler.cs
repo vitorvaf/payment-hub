@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FluentValidation;
 using PaymentHub.Application.Abstractions.Context;
+using PaymentHub.Application.Abstractions.Observability;
 using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Abstractions.Providers;
@@ -36,6 +37,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
     private readonly IUnitOfWork _uow;
     private readonly IClock _clock;
     private readonly IRuntimeEnvironment _environment;
+    private readonly ICorrelationIdAccessor _correlationIdAccessor;
 
     public CreateCheckoutHandler(
         ITenantRepository tenants,
@@ -48,7 +50,8 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         IOutboxPublisher outbox,
         IUnitOfWork uow,
         IClock clock,
-        IRuntimeEnvironment environment)
+        IRuntimeEnvironment environment,
+        ICorrelationIdAccessor correlationIdAccessor)
     {
         _tenants = tenants;
         _apps = apps;
@@ -61,6 +64,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         _uow = uow;
         _clock = clock;
         _environment = environment;
+        _correlationIdAccessor = correlationIdAccessor;
     }
 
     public async Task<CreateCheckoutResponse> HandleAsync(
@@ -174,6 +178,10 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         await _idempotency.AddAsync(idemKey, cancellationToken);
 
         var outboxEventId = Guid.NewGuid();
+        // Slice 9-O1.2: thread the request-scoped correlation id through to
+        // the outbox row so the dispatcher echoes it on the outbound
+        // X-Correlation-Id header.
+        var correlationId = _correlationIdAccessor.CorrelationId;
         await _outbox.EnqueueAsync(
             outboxEventId,
             tenantId,
@@ -193,6 +201,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
                 providerPaymentId = payment.ProviderPaymentId,
                 occurredAt = payment.CreatedAt
             },
+            correlationId,
             cancellationToken);
 
         await _uow.SaveChangesAsync(cancellationToken);

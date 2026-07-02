@@ -53,6 +53,9 @@ public class CheckoutsController : ControllerBase
             var applicationId = _tenantContext.ApplicationId;
             var result = await _handler.HandleAsync(
                 tenantId, applicationId, idempotencyKey, request, providerCode, cancellationToken);
+            // Slice 9-O1.1: the CorrelationIdMiddleware already echoed
+            // X-Correlation-Id on the response. The Created() helper
+            // preserves response headers added upstream.
             return Created($"/api/v1/payments/{result.PaymentId}", result);
         }
         catch (IdempotencyConflictException ex)

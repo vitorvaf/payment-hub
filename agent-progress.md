@@ -113,9 +113,239 @@ Use este arquivo para tarefas com mais de um passo. Mantenha entradas curtas e v
 
 ## Entrada atual
 
-### Proxima slice recomendada
+### Slice 9-O1 — Observabilidade minima do fluxo pagamentos/webhooks/outbox
 
-**Slice 3-H** — Hardening de webhooks externos/internos end-to-end, OU **Phase 9** — Observabilidade minima do fluxo pagamentos/webhooks/outbox.
+Status: IMPLEMENTING (iniciado 2026-07-01; sub-slices 9-O1.1 a 9-O1.6 ainda nao entregues).
+
+Contrato entregue pelo Planner; Implementer aguarda decisao das 4 perguntas abertas abaixo antes de iniciar 9-O1.1.
+
+## Objetivo
+
+Tornar o fluxo de pagamento diagnosticavel em producao com logs estruturados, correlationId/eventId consistentes, metricas minimas e regras anti-vazamento de secrets, sem introduzir dashboard complexo ou refactor amplo.
+
+Cobertura:
+
+1. CorrelationId/traceId consistente por request HTTP e por fluxo interno (checkout -> provider -> webhook externo -> inbox -> outbox -> webhook interno).
+2. Logs estruturados nos pontos criticos do fluxo de checkout, provider call AbacatePay, webhook externo, processamento de inbox e outbox.
+3. Metricas minimas (Counter + Histogram via `System.Diagnostics.Metrics`) sem exportador obrigatorio.
+4. Categorias de erro/evento canonicas reutilizando `AbacatePayErrorCategory`, `WebhookDispatcherCategory` e o novo `PaymentHubLogEvents`.
+5. Redacao/mascaramento de dados sensiveis (apiKey, webhookSecret, Authorization, X-Webhook-Signature, raw body, payload, brCode/brCodeBase64, customer.document, customer.email, customer.phone).
+6. Testes garantindo que logs/telemetria NAO vazam secrets + que metricas NAO usem tags de alta cardinalidade.
+7. Documentacao operacional de troubleshooting + actualizacao das specs 012 e 011.
+
+## Fora de escopo (re-asserting)
+
+- Dashboard completo, alertas completos, tracing distribuido avancado.
+- Integracao obrigatoria com servico externo real (SigNoz/Prometheus/Grafana).
+- Audit log persistido (`PH-AUD-001` continua deferred para Phase 6).
+- Mudancas em algoritmo HMAC, Outbox SKIP LOCKED ou regras de negocio.
+- Logging de Authorization, apiKey, webhookSecret, signature, raw body ou payload completo.
+- Tags de alta cardinalidade em metricas (`paymentId`, `eventId`, `tenantId`, `applicationId`, `customerEmail`, `externalReference`, `providerPaymentId`).
+- Chamadas reais AbacatePay/ApplicationClient em testes.
+
+## Discovery (resumo)
+
+### Estado atual de logging
+
+- `ILogger<T>` usado em 20+ arquivos (controllers, handlers, adapters, workers) com mensagens de string template e sem `BeginScope`/`LogContext.PushProperty`.
+- Serilog.AspNetCore registrado em `PaymentHub.Api/Program.cs:22-25` (`Enrich.FromLogContext + WriteTo.Console`).
+- Serilog.Extensions.Hosting + CompactJsonFormatter registrado em `PaymentHub.Worker/Program.cs:19-30` (mesma pipeline `Enrich.FromLogContext`).
+- Nenhum helper de safe-logging ate o momento; cada `_logger.Log*(... string ...)` interpola livremente.
+
+### Estado atual de correlationId/traceId
+
+- Zero infraestrutura: nenhum middleware, nenhum header canonico, nenhum `Activity.Current`, nenhum `IHttpContextAccessor.Items["correlationId"]`.
+- `ProviderWebhooksController` responde sem `X-Correlation-Id`; `Idempotency-Key` e o unico header canonico de tracking que existe hoje.
+- Implicacao: incidentes em producao hoje dependem exclusivamente do timestamp + agregacao por `tenantId/applicationId` no DB.
+
+### Estado atual de metricas/OpenTelemetry
+
+- Zero pacotes `System.Diagnostics.Metrics` ou `OpenTelemetry` instalados (verificado nos 9 `.csproj` do projeto).
+- Zero `Meter`, `Counter`, `Histogram`, `MeterListener` no codigo.
+- Implicacao: nao ha telemetria continua; apenas logs e contagens por audit report.
+
+### Pontos criticos do fluxo de checkout
+
+1. `CheckoutsController.Create` em `src/PaymentHub.Api/Controllers/CheckoutsController.cs` (logger + idempotency key).
+2. `CreateCheckoutHandler.HandleAsync` em `src/PaymentHub.Application/Checkouts/CreateCheckoutHandler.cs` (~14 pontos logaveis: tenant validado, application resolvida, idempotency conflito, provider resolvido, payment persistido, provider call, attempt registered, outbox enqueued).
+3. `AbacatePayProviderAdapter.CreateCheckoutAsync` (unprotect + bearer + rawResponseJson).
+4. `AbacatePayClient.SendAsync` em `src/PaymentHub.Infrastructure.Providers/AbacatePay/AbacatePayClient.cs` (path, statusCode, category, isTransient + duracao).
+
+### Pontos criticos do fluxo de webhook externo
+
+1. `ProviderWebhooksController.Receive` em `src/PaymentHub.Api/Controllers/ProviderWebhooksController.cs` (fail-fast 401 + raw body + persist Inbox).
+2. `ReceiveProviderWebhookHandler.HandleAsync` (dedup por `providerCode + providerEventId`).
+3. `ProcessWebhookEventHandler.ProcessAsync` em `src/PaymentHub.Application/Webhooks/WebhookHandlers.cs` (~10 pontos logaveis).
+4. `AbacatePayProviderAdapter.ParseWebhookAsync` (verifier + normalizer; categorias de erro).
+5. `AbacatePayWebhookManagementClient` (4-gate pipeline ja seguro: `providerCode + endpoint.Length + eventCount + category + statusCode`).
+
+### Pontos criticos do fluxo de outbox
+
+1. `OutboxDispatcherWorker.DispatchOnceAsync` em `src/PaymentHub.Worker/OutboxDispatcherWorker.cs` (~15 pontos logaveis).
+2. `HttpApplicationWebhookDispatcher.DispatchAsync` em `src/PaymentHub.Infrastructure.Postgres/Webhooks/HttpApplicationWebhookDispatcher.cs` (~5 pontos logaveis).
+
+### Estrategia anti-vazamento (resumo)
+
+1. **NUNCA** passar `apiKey`, `webhookSecret`, `Authorization`, `X-Webhook-Signature`, `X-PaymentHub-Signature`, raw body, payload completo, `brCode`, `brCodeBase64`, customer.document/email/phone para logs.
+2. Reaproveitar politicas ja existentes em `AbacatePayClientException.Message`, `AbacatePayProviderAdapter`, `AbacatePayWebhookManagementClient`, `HttpApplicationWebhookDispatcher`, `ProcessWebhookEventHandler.Sanitize` (ja remove `\r\n\0` e limita 2000 chars).
+3. Adicionar `scripts/agent-docs-check.sh` gate de regex: rejeita em `src/**/*.cs` uso de `Log(Warning|Information|Error|Debug)` com string interpolation contendo tokens proibidos (`{ApiKey}`, `{WebhookSecret}`, `{BrCode}`, `{BrCodeBase64}`, `{RawBody}`, `{Body}`, `{Signature}`, `{Authorization}`). Gate em modo de aviso nesta slice; promove para erro no fechamento.
+4. Manter `OutboxEvent.LastError` e `WebhookEvent.LastError` como politica categorizada (Slice 7-A.7 + Slice 2-B).
+
+### Testes previstos (cobertura alvo)
+
+- `CorrelationIdGeneratorTests` (3 testes: New guid-N, IsValid aceita/rejeita charset e tamanho).
+- `CorrelationIdMiddlewareTests` (3 testes: ausencia gera novo, valor valido preserva, valor invalido substituido).
+- `HttpCorrelationIdAccessorTests` (2 testes).
+- `PaymentHubMetricsTests` (4 testes: counter increment, error_category tag, retry counter, NO tags de alta cardinalidade).
+- `NoLeakLogTests` (5 testes: provider call failure NAO loga apiKey, webhook signature failure NAO loga webhookSecret nem X-Webhook-Signature, outbox dispatch failure NAO loga webhookSecret nem payload, abacatepay checkout failure NAO loga brCode/brCodeBase64).
+- `CorrelationIdE2ETests` (2 testes E2E: checkout retorna `X-Correlation-Id`, webhook inbound propaga `correlationId`).
+
+Suite alvo: 522 (baseline) + ~14 unit + ~3 integration = ~539 testes.
+
+### Riscos
+
+- Serilog: enriquecimento por request so funciona se `Enrich.FromLogContext()` permanece registrado (re-asserting).
+- `IHttpContextAccessor` no Worker: nao disponivel (Worker nao e HTTP). Propagacao de `correlationId` no fluxo Outbox exige persistir o valor em coluna nova (decisao abaixo) ou no payload JSON.
+- High-cardinality tags: `MeterListener` em testes deve validar que nenhum teste cria loop com tags dinamicas.
+- Anti-leak regex: precisa cobrir `String.Format`, `FormattableString`, `$"..."` interpolation no codigo de producao.
+
+## Plano de sub-slices (ordem recomendada, cada um pequeno e isolado)
+
+### 9-O1.1 — CorrelationId (helper + middleware + DI)
+
+- Helper `internal static class CorrelationIdGenerator` em `src/PaymentHub.Application/Observability/CorrelationIdGenerator.cs`. `New(): string` retorna `Guid.NewGuid().ToString("N")`. `IsValid(string?): bool` aplica regex `^[A-Za-z0-9\-]{8,128}$`.
+- Middleware `CorrelationIdMiddleware` em `src/PaymentHub.Api/Auth/CorrelationIdMiddleware.cs`. Le header `X-Correlation-Id` (case-insensitive), valida, gera quando ausente ou invalido, popula `HttpContext.Items["correlationId"]`, faz `LogContext.PushProperty("CorrelationId", id)` (Serilog), adiciona `X-Correlation-Id` ao response.
+- DI: `app.UseMiddleware<CorrelationIdMiddleware>();` em `PaymentHub.Api/Program.cs` ANTES de `ApiKeyAuthenticationMiddleware` para que logs de 401/403/validation tambem carreguem `CorrelationId`.
+- Politica de header invalido: **substituido** por novo gerado (status 2xx); nao retorna 400. Documentar inline.
+
+### 9-O1.2 — Propagacao (accessor + colunas novas webhook_events/outbox_events)
+
+- Interface `ICorrelationIdAccessor` em `src/PaymentHub.Application/Abstractions/Observability/ICorrelationIdAccessor.cs` (`string? CorrelationId { get; }` + `void Set(string id)`).
+- Implementacao `HttpCorrelationIdAccessor` (Scoped) que le/escreve `HttpContext.Items["correlationId"]`.
+- Injetada em `CreateCheckoutHandler`, `ProcessWebhookEventHandler`, `ReceiveProviderWebhookHandler`, `ConfigureProviderAccountWebhookHandler`, `ProviderAccountsWebhookController`, `CheckoutsController`.
+- Em `WebhookEvent`/`OutboxEvent`, persistir `correlationId` em **nova coluna** `correlation_id varchar(64) NULL` (decisao abaixo). O `OutboxDispatcherWorker` le `outboxEvent.CorrelationId` e passa para `HttpApplicationWebhookDispatcher`, que adiciona header `X-Correlation-Id` ao request outbound.
+- Decisao explicita: **NAO** colocar `correlationId` dentro de `OutboxEvent.payload` (mantem payload como jsonb canonico sem dados de observabilidade).
+
+### 9-O1.3 — Metricas (PaymentHubMetrics + 13 instrumentos + DI)
+
+- `PaymentHubMetrics` em `src/PaymentHub.Application/Observability/PaymentHubMetrics.cs`:
+  - `static readonly Meter Meter = new("PaymentHub.Observability", "1.0.0");`
+  - 13 `Counter<long>` (suffix `_total`): `paymenthub_checkout_created_total`, `paymenthub_checkout_failed_total`, `paymenthub_provider_call_total`, `paymenthub_provider_call_failed_total`, `paymenthub_provider_webhook_received_total`, `paymenthub_provider_webhook_rejected_total`, `paymenthub_provider_webhook_processed_total`, `paymenthub_provider_webhook_duplicate_total`, `paymenthub_outbox_claimed_total`, `paymenthub_outbox_dispatched_total`, `paymenthub_outbox_failed_total`, `paymenthub_outbox_retried_total`, `paymenthub_outbox_swept_orphaned_total`.
+  - 3 `Histogram<double>` (suffix `_duration_ms`): `paymenthub_provider_call_duration_ms`, `paymenthub_webhook_processing_duration_ms`, `paymenthub_outbox_dispatch_duration_ms`.
+- Tags seguras (whitelist): `provider`, `operation`, `status`, `error_category`, `event_type`, `environment`.
+- DI: `services.AddSingleton<PaymentHubMetrics>();` em `PostgresServiceCollectionExtensions` (parte da Infra para que Worker tambem use).
+- Default: instrumentacao sempre ativa (sem gate condicional). Testes deterministicos via `InMemoryMetricsCollector` opt-in em `tests/PaymentHub.UnitTests/Support/`.
+
+### 9-O1.4 — Logs estruturados (PaymentHubLogEvents + refactor + gate anti-leak)
+
+- `PaymentHubLogEvents` em `src/PaymentHub.Application/Observability/PaymentHubLogEvents.cs` com ~30 nomes canonicos + LogLevel por evento (lista completa no briefing).
+- Cada handler faz `_logger.BeginScope(new Dictionary<string, object?> { ["CorrelationId"] = ... })` antes do trecho logavel; Serilog captura via `LogContext.PushProperty` no middleware.
+- Anti-leak gate: extensao de `scripts/agent-docs-check.sh` para rejeitar uso de `Log(Warning|Information|Error|Debug)` com string interpolation contendo tokens proibidos.
+- Helpers de redacao em `src/PaymentHub.Application/Observability/SafeLog.cs`: `SafeLog.Id(Guid g)`, `SafeLog.Length(string? s)`, `SafeLog.Bool(string key, bool? value)`. Politica: observar a **coisa**, nao o **valor**.
+
+### 9-O1.5 — Testes (helpers InMemory* + correlation/no-leak/metrics unit + E2E)
+
+- Helpers em `tests/PaymentHub.UnitTests/Support/`:
+  - `InMemoryLoggerProvider.cs` (substitui o `_logger.BeginScope` noop de `DevelopmentDataSeederTests.cs:430`).
+  - `InMemoryMetricsCollector.cs` (usa `MeterListener` para capturar leituras por `instrumentName` + tags).
+  - `CorrelationIdTestHelper.cs` (factory de correlationId valido + invalido).
+- Unit tests (~13) + Integration tests (~2): ver lista em "Testes previstos" acima.
+- Migration nova: `20260701000001_AddObservabilityColumns.cs` com `AddColumn("correlation_id", "varchar(64)", nullable=true)` em `webhook_events` e `outbox_events`.
+
+### 9-O1.6 — Documentacao + auditoria
+
+- Reescrever `docs/specs/012-observability-and-audit.md` (correlacao, contratos de log eventos, metricas, redacao, anti-regression, cobertura).
+- Atualizar `docs/specs/011-security-and-compliance.md` com subsecao `Observabilidade anti-vazamento`.
+- Atualizar `docs/harness/validation.md` com bloco `Slice-specific (Phase 9 / Slice 9-O1)` (MUST-NOT-REGRESS).
+- Atualizar `docs/roadmap/001-development-timeline.md`: Phase 9 -> `IMPLEMENTING`.
+- Atualizar `docs/roadmap/002-phase-status-board.md`: Phase 9 status + Phase 6 indicador.
+- Atualizar `docs/harness/validation-matrix.md`: 15-20 linhas.
+- Atualizar `feature_list.md`: 4 entradas novas (PH-OBS-001..004) marcadas Concluido.
+- Atualizar `docs/harness/learnings.md`: entrada nova 2026-07-01.
+- Criar `docs/audits/slice-9-o1-observability-minimal-report-2026-07-01.md`.
+
+## Arquivos provaveis
+
+**Producao (~20 arquivos)**: `CorrelationIdGenerator.cs`, `PaymentHubLogEvents.cs`, `PaymentHubMetrics.cs`, `SafeLog.cs`, `ICorrelationIdAccessor.cs`, `HttpCorrelationIdAccessor.cs`, `CorrelationIdMiddleware.cs`, `PaymentHub.Api/Program.cs`, `CreateCheckoutHandler.cs`, `WebhookHandlers.cs`, `ConfigureProviderAccountWebhookHandler.cs`, `ProviderWebhooksController.cs`, `CheckoutsController.cs`, `HttpApplicationWebhookDispatcher.cs`, `OutboxDispatcherWorker.cs`, `WebhookProcessorWorker.cs`, `AbacatePayClient.cs`, `AbacatePayProviderAdapter.cs`, `OutboxRepository`, `WebhookEvent.cs`, `OutboxEvent.cs`, `Migration 20260701000001`, `EntityConfigurations.cs`, `PostgresServiceCollectionExtensions.cs`.
+
+**Tests (~8 arquivos)**: `InMemoryLoggerProvider.cs`, `InMemoryMetricsCollector.cs`, `CorrelationIdGeneratorTests.cs`, `CorrelationIdMiddlewareTests.cs`, `HttpCorrelationIdAccessorTests.cs`, `PaymentHubMetricsTests.cs`, `NoLeakLogTests.cs`, `CorrelationIdE2ETests.cs`.
+
+**Docs (8 arquivos)**: `012-observability-and-audit.md` (reescrito), `011-security-and-compliance.md`, `validation.md`, `validation-matrix.md`, `learnings.md`, `001-development-timeline.md`, `002-phase-status-board.md`, `feature_list.md`.
+
+**Scripts (1 arquivo)**: `scripts/agent-docs-check.sh` (extensao).
+
+**Audit (1 arquivo)**: `docs/audits/slice-9-o1-observability-minimal-report-2026-07-01.md`.
+
+## Validacoes planejadas
+
+```bash
+# Repo + build + suite
+git status --short
+dotnet restore PaymentHub.slnx
+dotnet build PaymentHub.slnx          # esperado: 0 errors / 0 warnings
+dotnet test PaymentHub.slnx           # esperado: ~539 testes (522 baseline + ~17 novos)
+
+# Integracao
+dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj
+
+# Filtros novos
+dotnet test PaymentHub.slnx --filter "FullyQualifiedName~Observability"
+dotnet test PaymentHub.slnx --filter "FullyQualifiedName~CorrelationId"
+dotnet test PaymentHub.slnx --filter "FullyQualifiedName~Metrics"
+
+# Regressao
+dotnet test PaymentHub.slnx --filter "FullyQualifiedName~AbacatePay"
+dotnet test PaymentHub.slnx --filter "FullyQualifiedName~ProviderAccount"
+dotnet test PaymentHub.slnx --filter "FullyQualifiedName~Webhook"
+dotnet test PaymentHub.slnx --filter "FullyQualifiedName~EndToEnd"
+dotnet test PaymentHub.slnx --filter "FullyQualifiedName~Outbox"
+
+# Scripts locais (com extensao anti-leak)
+scripts/agent-architecture-check.sh
+scripts/agent-docs-check.sh
+
+# Diff limpo
+git diff --check
+
+# Opcional
+scripts/agent-verify.sh
+RUN_DOTNET_VALIDATION=1 scripts/agent-verify.sh
+```
+
+## Riscos residuais
+
+- **Worker sem IHttpContextAccessor**: propagacao de `correlationId` no fluxo Outbox exige nova coluna no schema (decisao abaixo).
+- **Anti-leak regex** pode gerar falso positivo em logs legitimos. Regex scope `src/**/*.cs` + lista de tokens proibidos. Gate em modo warn nesta slice; erro no fechamento 9-O1.6.
+- **Meter tags e testes deterministicos**: `InMemoryMetricsCollector` precisa desativar o provider entre testes (evita cross-test pollution). Solucao: helper de fixture.
+- **`Enrich.FromLogContext()`** registrado em ambos Programs (verificado na discovery). Risco zero desde que o middleware use `LogContext.PushProperty`.
+- **`Activity.Current`** nao sera usado nesta slice (zero dependencia OpenTelemetry). Decisao: instrumentacao fica em `LogContext` Serilog + `Meter` no System.Diagnostics. Sem tracing distribuido.
+
+## Perguntas que precisavam de decisao humana antes de implementar (9-O1.1)
+
+Antes de iniciar 9-O1.1 (CorrelationId), o Planner levantou 4 perguntas. As respostas abaixo foram fechadas em 2026-07-01 pelo produto/tech-lead (todas as opcoes marcadas como Recommended pelo Planner foram confirmadas).
+
+1. **Onde armazenar `correlationId` no caminho Outbox**: **(a) coluna nova `webhook_events.correlation_id VARCHAR(64) NULL` + `outbox_events.correlation_id VARCHAR(64) NULL`** (preferida; permite debugging futuro via SELECT sem parsing de log; NAO polui o payload JSON canonico). O `OutboxDispatcherWorker` le `outboxEvent.CorrelationId` e o `HttpApplicationWebhookDispatcher` adiciona header `X-Correlation-Id` ao request outbound. Migration `20260701000001_AddObservabilityColumns.cs` registra ambas as colunas.
+2. **Politica para `X-Correlation-Id` invalido**: **(a) substituir por novo gerado** (silencioso, sempre 2xx, sem 400). `CorrelationIdMiddleware` loga informacao minima (NAO loga o valor recebido, para evitar log injection) e devolve o novo `X-Correlation-Id` no response.
+3. **Default de metricas**: **(sem gate; sempre ativa)**. `PaymentHubMetrics` e registrado como Singleton e instrumenta incondicionalmente. Custo ~ns por increment. Testes unitarios usam `InMemoryMetricsCollector` (MeterListener scoped por teste via fixture) para isolar leituras e evitar flakiness. Documentar inline em `PaymentHubMetrics.cs` que o wrapper e safe-by-default.
+4. **Payload JSON de eventos internos**: **NAO adicionar `correlationId` ao payload**. `OutboxEvent.payload` permanece `jsonb` puro com schema canonico `{ eventId, eventType, paymentId, externalReference, amount, currency, provider, status, providerPaymentId, occurredAt }`. Observabilidade fica exclusivamente em coluna nova + header outbound + logs.
+
+## Decisoes fechadas em 2026-07-01 (resumo executivo)
+
+| # | Tema | Decisao | Implicacao para o Implementer |
+|---|------|---------|-------------------------------|
+| 1 | Armazenamento de correlationId | Colunas novas + header outbound | Migration `20260701000001` obrigatoria em 9-O1.2; mapear `correlation_id` em `EntityConfigurations.cs` |
+| 2 | Header invalido | Substituir silenciosamente | `CorrelationIdMiddleware` NAO retorna 400; documentar inline + teste explicito |
+| 3 | EnableMetrics default | Sempre ativa | Remover gate condicional do plano original; sem `PaymentHub:Observability` em `appsettings*.json` |
+| 4 | Outbox payload | Sem correlationId | Nenhuma alteracao em `OutboxEvent.payload`/`IOutboxPublisher.EnqueueAsync` alem do que ja existe |
+
+Estas 4 decisoes sao MUST-NOT-CHANGE no 9-O1.1-9-O1.6 sem nova aprovacao humana. Documentacao de cada uma sera inserida em 9-O1.6 nas secoes pertinentes (`docs/specs/012-observability-and-audit.md`, `docs/specs/011-security-and-compliance.md`, `docs/harness/validation.md`).
+
+## Proximo slice recomendado (apos 9-O1)
+
+- `PH-AUD-001 — Slice 6-AuditLog` (audit log em handlers administrativos), OU
+- `Slice 3-H — Hardening de webhooks externos/internos end-to-end`.
+
+Escolher conforme gaps remanescentes no fechamento da 9-O1.
 
 ### 2026-06-30 - Slice 2-C.1 fechado (real AbacatePay webhook management client substitui NoOp)
 

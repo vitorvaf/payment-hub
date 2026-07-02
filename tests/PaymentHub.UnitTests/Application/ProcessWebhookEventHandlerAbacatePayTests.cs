@@ -406,7 +406,8 @@ public class ProcessWebhookEventHandlerAbacatePayTests
             It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         outbox.Verify(o => o.EnqueueAsync(
             It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid>(),
-            It.IsAny<string>(), It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<string>(), It.IsAny<object>(),
+            It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -506,7 +507,8 @@ public class ProcessWebhookEventHandlerAbacatePayTests
         payment.Attempts.Should().BeEmpty();
         outbox.Verify(o => o.EnqueueAsync(
             It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid>(),
-            It.IsAny<string>(), It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<string>(), It.IsAny<object>(),
+            It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
         webhook.ProcessingStatus.Should().Be(WebhookProcessingStatus.Failed);
     }
 }

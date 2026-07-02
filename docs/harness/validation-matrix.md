@@ -218,6 +218,23 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 |-------|-------|------|-----------------|--------------------|---------------|--------|------|
 | 9 | Health | Manual | `GET /health` | 200 OK | `PENDING` | `PENDING` | — |
 | 9 | Metrics | Manual | OpenTelemetry exporta metricas de checkout | Metricas visiveis | `PENDING` | `PENDING` | — |
+| 9 | 9-O1 | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings | 0 erros, 0 warnings em 9 projetos | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Unit | `dotnet test --filter FullyQualifiedName~CorrelationId` | Helper + middleware + accessor | 21 testes passando | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Unit | `dotnet test --filter FullyQualifiedName~SafeLog` | `Id`/`Length`/`Flag`/`Category` | 11 testes passando | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Unit | `dotnet test --filter FullyQualifiedName~PaymentHubMetrics` | Tag whitelist + counters + histograms | 10 testes passando | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Unit | `dotnet test --filter FullyQualifiedName~NoLeak` | Reflection audit | 2 testes passando | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Unit | `dotnet test PaymentHub.slnx` | >= 547 testes (489 baseline medido em HEAD~1 + 58 novos em 9-O1 / +44 metodos), zero regressao | 547 testes passando | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Anti-Leak Gate | `scripts/agent-docs-check.sh` | Regex gate catches `Log*(<token>` para `apiKey`/`webhookSecret`/`rawPayload`/`signature`/`Authorization`/`body` | Gate ativo e verde | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Architecture | `scripts/agent-architecture-check.sh` | Domain NAO referencia Application; Worker NAO tem IHttpContextAccessor | Passou | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Diff | `git diff --check` | Sem warnings | Sem warnings | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Anti-Regression | `webhook_events.raw_payload` continua `text` (Slice 3-IT) | Auditado | `text` | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Anti-Regression | `provider_accounts.webhook_events` continua `text` (Slice 2-C) | Auditado | `text` | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Anti-Regression | `outbox_events.payload` continua `jsonb` (Slice 7-IT) | Auditado | `jsonb` | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Anti-Regression | `webhookSecret` continua sem coluna propria (Slice 2-C) | Auditado | Sem coluna | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Anti-Regression | `OutboxEvent.LastError` continua apenas categoria enum (Slice 7-A.7) | Auditado em `OutboxEvent.MarkRetryWithStatus`/`MarkFailedWithStatus` | Apenas enum | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | Migration | `20260701000001_AddObservabilityColumns` | Adiciona `correlation_id VARCHAR(64) NULL` em `webhook_events` e `outbox_events`, sem `webhookSecret`, sem `jsonb` | Migration criada; diff manual | `PASS` | 2026-07-01 (Slice 9-O1) |
+| 9 | 9-O1 | E2E | `dotnet test --filter FullyQualifiedName~CorrelationIdE2ETests` | Cobre checkout->response header + inbound webhook propagation | 2 testes adicionados (NÃO EXECUTADOS por falta de Docker nesta sessao) | `PENDING` | 2026-07-01 (Slice 9-O1 — E2E pendente requer Docker) |
+| 9 | 9-O1 | Docs | `docs/audits/slice-9-o1-observability-minimal-report-2026-07-01.md` | Relatorio final + Q1-Q4 respondidas + gaps remanescentes | A criar | `PENDING` | 2026-07-01 (Slice 9-O1 — audit report) |
 
 ---
 

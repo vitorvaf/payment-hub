@@ -4,7 +4,10 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using PaymentHub.Api.Auth;
 using PaymentHub.Api.Controllers;
+using PaymentHub.Application.Abstractions.Observability;
+using PaymentHub.Application.Observability;
 using PaymentHub.Application.Webhooks;
 
 namespace PaymentHub.UnitTests.Api;
@@ -13,6 +16,11 @@ namespace PaymentHub.UnitTests.Api;
 /// Slice 2-B fail-fast coverage for the inbound provider webhook
 /// controller. The handler-level AbacatePay contract is exercised by
 /// <c>ProcessWebhookEventHandlerAbacatePayTests</c>.
+///
+/// <para>Slice 9-O1.2 extended the contract: the controller now reads the
+/// resolved <c>CorrelationId</c> from <see cref="ICorrelationIdAccessor"/>
+/// and forwards it to <see cref="IReceiveProviderWebhookHandler"/> so the
+/// inbox row carries the inbound id end-to-end.</para>
 /// </summary>
 public class ProviderWebhooksControllerTests
 {
@@ -21,9 +29,31 @@ public class ProviderWebhooksControllerTests
 
     private readonly Mock<IReceiveProviderWebhookHandler> _handler = new(MockBehavior.Strict);
 
-    private ProviderWebhooksController BuildController(string? rawBody, string? abacateSignature, string? legacySignature = null)
+    /// <summary>
+    /// Builds an <see cref="ICorrelationIdAccessor"/> backed by the
+    /// <c>HttpContext.Items</c> slot the middleware would normally populate.
+    /// Tests that want to assert the correlation id propagation set a value
+    /// through <c>SeedCorrelationId</c>.
+    /// </summary>
+    private static (ICorrelationIdAccessor Accessor, HttpContext Context) BuildAccessorWithHttpContext()
     {
         var http = new DefaultHttpContext();
+        var accessor = new HttpCorrelationIdAccessor(new HttpContextAccessor { HttpContext = http });
+        return (accessor, http);
+    }
+
+    private static void SeedCorrelationId(HttpContext http, string id)
+    {
+        http.Items[CorrelationIdGenerator.HttpContextItemsKey] = id;
+    }
+
+    private ProviderWebhooksController BuildController(
+        string? rawBody,
+        string? abacateSignature,
+        string? legacySignature = null,
+        string? correlationId = null)
+    {
+        var (accessor, http) = BuildAccessorWithHttpContext();
         http.Request.Body = new MemoryStream(
             Encoding.UTF8.GetBytes(rawBody ?? string.Empty));
         http.Request.Headers["X-Provider-Event-Id"] = "evt_xyz";
@@ -32,9 +62,11 @@ public class ProviderWebhooksControllerTests
             http.Request.Headers["X-Webhook-Signature"] = abacateSignature;
         if (!string.IsNullOrEmpty(legacySignature))
             http.Request.Headers["X-Provider-Signature"] = legacySignature;
+        if (!string.IsNullOrEmpty(correlationId))
+            SeedCorrelationId(http, correlationId);
 
         var controller = new ProviderWebhooksController(
-            _handler.Object, NullLogger<ProviderWebhooksController>.Instance)
+            _handler.Object, accessor, NullLogger<ProviderWebhooksController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = http }
         };
@@ -55,7 +87,8 @@ public class ProviderWebhooksControllerTests
         _handler.Verify(
             h => h.HandleAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -64,7 +97,8 @@ public class ProviderWebhooksControllerTests
     {
         _handler.Setup(h => h.HandleAsync(
                 "AbacatePay", "transparent.completed", AbacateBody, "evt_xyz",
-                "abcd-signature", It.IsAny<CancellationToken>()))
+                "abcd-signature", It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(Guid.NewGuid());
 
         var controller = BuildController(AbacateBody, abacateSignature: "abcd-signature");
@@ -78,7 +112,8 @@ public class ProviderWebhooksControllerTests
         _handler.Verify(
             h => h.HandleAsync(
                 "AbacatePay", "transparent.completed", AbacateBody, "evt_xyz",
-                "abcd-signature", It.IsAny<CancellationToken>()),
+                "abcd-signature", It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -90,7 +125,8 @@ public class ProviderWebhooksControllerTests
         // header so consumers can roll out the new contract gradually.
         _handler.Setup(h => h.HandleAsync(
                 "AbacatePay", "transparent.completed", AbacateBody, "evt_xyz",
-                "legacy-sig", It.IsAny<CancellationToken>()))
+                "legacy-sig", It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(Guid.NewGuid());
 
         var controller = BuildController(AbacateBody, abacateSignature: null, legacySignature: "legacy-sig");
@@ -111,7 +147,8 @@ public class ProviderWebhooksControllerTests
         // accidental dual-stack confusion during the rollout.
         _handler.Setup(h => h.HandleAsync(
                 "AbacatePay", "transparent.completed", AbacateBody, "evt_xyz",
-                "abacate-sig", It.IsAny<CancellationToken>()))
+                "abacate-sig", It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(Guid.NewGuid());
 
         var controller = BuildController(AbacateBody, abacateSignature: "abacate-sig", legacySignature: "legacy-sig");
@@ -124,12 +161,14 @@ public class ProviderWebhooksControllerTests
         _handler.Verify(
             h => h.HandleAsync(
                 "AbacatePay", "transparent.completed", AbacateBody, "evt_xyz",
-                "abacate-sig", It.IsAny<CancellationToken>()),
+                "abacate-sig", It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()),
             Times.Once);
         _handler.Verify(
             h => h.HandleAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string>(), "legacy-sig", It.IsAny<CancellationToken>()),
+                It.IsAny<string>(), "legacy-sig",
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -141,7 +180,8 @@ public class ProviderWebhooksControllerTests
         // header until each provider adopts its own contract.
         _handler.Setup(h => h.HandleAsync(
                 "Fake", "transparent.completed", AbacateBody, "evt_xyz",
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(Guid.NewGuid());
 
         var controller = BuildController(AbacateBody, abacateSignature: null);
@@ -163,7 +203,7 @@ public class ProviderWebhooksControllerTests
         var capturedBody = string.Empty;
         string? capturedSignature = null;
 
-        var http = new DefaultHttpContext();
+        var (accessor, http) = BuildAccessorWithHttpContext();
         var bodyBytes = Encoding.UTF8.GetBytes(AbacateBody);
         http.Request.Body = new MemoryStream(bodyBytes);
         http.Request.Headers["X-Provider-Event-Id"] = "evt_xyz";
@@ -173,9 +213,10 @@ public class ProviderWebhooksControllerTests
 
         _handler.Setup(h => h.HandleAsync(
                 "AbacatePay", "transparent.completed", It.IsAny<string>(), "evt_xyz",
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, string, string?, string?, CancellationToken>(
-                (_, _, body, _, signature, _) =>
+                It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, string?, string?, string?, CancellationToken>(
+                (_, _, body, _, signature, _, _) =>
                 {
                     capturedBody = body;
                     capturedSignature = signature;
@@ -183,7 +224,7 @@ public class ProviderWebhooksControllerTests
             .ReturnsAsync(Guid.NewGuid());
 
         var controller = new ProviderWebhooksController(
-            _handler.Object, NullLogger<ProviderWebhooksController>.Instance)
+            _handler.Object, accessor, NullLogger<ProviderWebhooksController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = http }
         };
@@ -211,5 +252,60 @@ public class ProviderWebhooksControllerTests
             CancellationToken.None);
 
         result.Should().BeOfType<UnauthorizedObjectResult>();
+    }
+
+    [Fact]
+    public async Task Receive_ShouldForwardResolvedCorrelationId_WhenAccessorHasValue()
+    {
+        // Slice 9-O1.2: the controller forwards the resolved CorrelationId
+        // from the accessor so the WebhookEvent row carries the inbound id.
+        string? capturedCorrelationId = null;
+        var seededId = "abcd1234efgh5678";
+
+        _handler.Setup(h => h.HandleAsync(
+                "AbacatePay", "transparent.completed", AbacateBody, "evt_xyz",
+                It.IsAny<string>(), seededId,
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, string?, string?, string?, CancellationToken>(
+                (_, _, _, _, _, correlationId, _) => capturedCorrelationId = correlationId)
+            .ReturnsAsync(Guid.NewGuid());
+
+        var controller = BuildController(
+            AbacateBody, abacateSignature: "abcd-signature",
+            correlationId: seededId);
+
+        await controller.Receive(
+            "AbacatePay", "evt_xyz", "transparent.completed",
+            legacySignature: null, abacateSignature: "abcd-signature",
+            CancellationToken.None);
+
+        capturedCorrelationId.Should().Be(seededId);
+    }
+
+    [Fact]
+    public async Task Receive_ShouldForwardNullCorrelationId_WhenAccessorIsEmpty()
+    {
+        // The controller must tolerate a null CorrelationId (e.g. when the
+        // host is configured without the CorrelationIdMiddleware). The
+        // handler receives null and the WebhookEvent row keeps
+        // correlation_id NULL.
+        string? capturedCorrelationId = "not-yet-set";
+
+        _handler.Setup(h => h.HandleAsync(
+                "Fake", "transparent.completed", AbacateBody, "evt_xyz",
+                It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, string?, string?, string?, CancellationToken>(
+                (_, _, _, _, _, correlationId, _) => capturedCorrelationId = correlationId)
+            .ReturnsAsync(Guid.NewGuid());
+
+        var controller = BuildController(AbacateBody, abacateSignature: null);
+
+        await controller.Receive(
+            "Fake", "evt_xyz", "transparent.completed",
+            legacySignature: null, abacateSignature: null,
+            CancellationToken.None);
+
+        capturedCorrelationId.Should().BeNull();
     }
 }

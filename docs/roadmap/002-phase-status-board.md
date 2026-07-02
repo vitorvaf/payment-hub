@@ -1,6 +1,6 @@
 # Payment Hub — Painel de Status de Fases
 
-Data de referencia: 2026-06-30
+Data de referencia: 2026-07-01
 
 ## Dashboard de status
 
@@ -15,7 +15,7 @@ Data de referencia: 2026-06-30
 | 6 | Seguranca e Confiabilidade | `IMPLEMENTING` | **0 proprios³** | 1 (audit log P2-3) | Aguarda P2-3 |
 | 7 | Workers e Outbox | `IMPLEMENTED` | 0 proprios⁴ | 0 (multi-instancia + sweep Processing orfao RESOLVIDO via Slice 7-M1 2026-06-30; e2e API+Worker RESOLVIDO via Slice 7-IT 2026-06-30; cobertura E2E 498 testes 7-M1+7-IT) | Aguarda Phase 6 (validacao final) |
 | 8 | Conciliacao Financeira | `NOT_STARTED` | 0 | 0 | Aguarda Phase 4 + 7 |
-| 9 | Relatorios e Observabilidade | `SPEC_DRAFTED` | 0 | 0 | Aguarda Phase 6 + 7 |
+| 9 | Relatorios e Observabilidade | `IMPLEMENTING` | 0 | 0 (Slice 9-O1 entregue 2026-07-01: catalogo +63 testes + gate anti-leak) | Aguarda Phase 6 + instrumentacao ativa em Slice 9-O2+ |
 | 10 | Evolucoes Futuras | `NOT_STARTED` | 0 | 0 | Backlog de produto |
 
 Notas:
@@ -40,9 +40,11 @@ Notas:
 
 ⁴ Phase 7 alcancou 0 gaps P1 proprios apos o Slice 7-A (2026-06-26), a entrega da base de integracao via Slice 1-IT (2026-06-26: migrations + repositorios principais + Outbox via Testcontainers, 10 testes passando), a suite E2E do dispatcher via Slice 7-IT (2026-06-30: 7 testes em `tests/PaymentHub.IntegrationTests/EndToEnd/OutboxDispatcherE2ETests.cs` cobrindo Sent, HMAC, retry 500/429, UnprotectFailure, fluxo AbacatePay e no-redispatch de Sent) e a multi-instancia + sweep de `Processing` orfao via Slice 7-M1 (2026-06-30: 7 testes em `OutboxDispatcherConcurrencyTests` + `OutboxProcessingSweepTests`; cobertura E2E total de Phase 7 = 498 testes). Phase 7 promovida a `IMPLEMENTED` em 2026-06-30; a fase NAO e `VALIDATED` ate Phase 6 estar fechada por completo (P2-3 audit log).
 
+⁵ Phase 9 sai de `SPEC_DRAFTED` para `IMPLEMENTING` apos o Slice 9-O1 (2026-07-01). Entrega da slice 9-O1: header HTTP `X-Correlation-Id` inbound/outbound, coluna `correlation_id VARCHAR(64) NULL` em `webhook_events` + `outbox_events` (migration `20260701000001_AddObservabilityColumns`), `CorrelationIdMiddleware` registrado ANTES de `ApiKeyAuthenticationMiddleware` em `Program.cs`, 13 counters + 3 histograms no `Meter` "PaymentHub" com tag whitelist (7 chaves), catalogo `PaymentHubLogEvents` com 31 eventos canonicos, helpers `SafeLog` (`Id`/`Length`/`Flag`/`Category`), gate regex anti-leak em `scripts/agent-docs-check.sh` cobrindo 6 tokens sensitive, suite 547 testes (522 baseline + 25 novos). Worker host continua sem `HttpContext` (usa `NullCorrelationIdAccessor` Singleton). E2E `CorrelationIdE2ETests` adicionado mas NAO EXECUTADO nesta slice (sem Docker); sera validado na proxima sessao. Restam para 9-O2+: instrumentacao ativa nos handlers/workers + distributed tracing via `Activity`/OpenTelemetry (ambos fora de escopo MVP). Detalhes em `docs/audits/slice-9-o1-observability-minimal-report-2026-07-01.md`.
+
 ---
 
-## Estado atual do MVP (2026-06-30)
+## Estado atual do MVP (2026-07-01)
 
 ### O que esta funcionando
 

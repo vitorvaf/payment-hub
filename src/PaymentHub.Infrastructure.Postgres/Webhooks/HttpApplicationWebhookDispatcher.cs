@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Abstractions.Security;
+using PaymentHub.Application.Observability;
 using PaymentHub.Domain.Entities;
 using PaymentHub.Domain.Enums;
 using PaymentHub.Infrastructure.Postgres.Options;
@@ -115,6 +116,15 @@ public sealed class HttpApplicationWebhookDispatcher : IApplicationWebhookDispat
         request.Headers.TryAddWithoutValidation("X-PaymentHub-Event-Type", outboxEvent.EventType);
         request.Headers.TryAddWithoutValidation("X-PaymentHub-Event-Id", outboxEvent.Id.ToString());
         request.Headers.TryAddWithoutValidation("X-PaymentHub-Timestamp", timestamp);
+        // Slice 9-O1.2: echo the originating correlation id so consumers can
+        // stitch their logs back to the Payment Hub request that produced
+        // the outbox row. Outbound header is bounded by the same
+        // IsValid window the middleware uses (we already persisted only
+        // valid candidates in the column).
+        if (!string.IsNullOrEmpty(outboxEvent.CorrelationId))
+        {
+            request.Headers.TryAddWithoutValidation(CorrelationIdGenerator.HeaderName, outboxEvent.CorrelationId);
+        }
         if (!string.IsNullOrEmpty(signature))
         {
             request.Headers.TryAddWithoutValidation("X-PaymentHub-Signature", signature);

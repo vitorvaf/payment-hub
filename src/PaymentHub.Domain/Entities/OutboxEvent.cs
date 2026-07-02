@@ -25,6 +25,18 @@ public class OutboxEvent
     /// </summary>
     public DateTime? ProcessingStartedAt { get; private set; }
 
+    /// <summary>
+    /// Slice 9-O1.2: request-scoped correlation id propagated end-to-end
+    /// (checkout -&gt; provider -&gt; webhook -&gt; Inbox -&gt; Outbox -&gt;
+    /// application webhook). The dispatcher echoes the value on the outbound
+    /// <c>X-Correlation-Id</c> header so consumers can stitch logs across the
+    /// two systems. Optional: pre-9-O1.1 rows and processes that never had a
+    /// middleware (background seeds) persist <c>null</c>. Column type is
+    /// <c>varchar(64)</c>; values are bounded to 64 chars by
+    /// <see cref="NormalizeCorrelationId"/>.
+    /// </summary>
+    public string? CorrelationId { get; private set; }
+
     public DateTime CreatedAt { get; private set; }
     public DateTime UpdatedAt { get; private set; }
 
@@ -35,7 +47,8 @@ public class OutboxEvent
         Guid tenantId,
         Guid applicationId,
         string eventType,
-        string payloadJson)
+        string payloadJson,
+        string? correlationId = null)
     {
         if (id == Guid.Empty) throw new ArgumentException("Id is required.", nameof(id));
         if (tenantId == Guid.Empty) throw new ArgumentException("TenantId is required.", nameof(tenantId));
@@ -50,9 +63,32 @@ public class OutboxEvent
         ApplicationId = applicationId;
         EventType = eventType.Trim();
         PayloadJson = payloadJson;
+        CorrelationId = NormalizeCorrelationId(correlationId);
         Status = OutboxEventStatus.Pending;
         CreatedAt = DateTime.UtcNow;
         UpdatedAt = CreatedAt;
+    }
+
+    /// <summary>
+    /// Sets the correlation id after construction. Used when the publisher
+    /// already created the row and the accessor becomes available later (e.g.
+    /// when the publisher runs outside an HTTP request but the webhook
+    /// handler has already stamped the inbound <c>correlationId</c>).
+    /// </summary>
+    public void SetCorrelationId(string? correlationId)
+    {
+        CorrelationId = NormalizeCorrelationId(correlationId);
+    }
+
+    private static string? NormalizeCorrelationId(string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate)) return null;
+        var trimmed = candidate.Trim();
+        // Slice 9-O1.2: bounded to the column width (varchar(64)) declared
+        // in the migration. Keep the cap local to the Domain layer so we
+        // avoid a reverse dependency on Application.
+        const int MaxLength = 64;
+        return trimmed.Length <= MaxLength ? trimmed : trimmed[..MaxLength];
     }
 
     /// <summary>

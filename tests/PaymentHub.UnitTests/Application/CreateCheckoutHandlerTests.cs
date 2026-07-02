@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Moq;
 using PaymentHub.Application.Abstractions.Context;
+using PaymentHub.Application.Abstractions.Observability;
 using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Abstractions.Providers;
@@ -24,6 +25,7 @@ public class CreateCheckoutHandlerTests
     private readonly Mock<IUnitOfWork> _uow = new();
     private readonly Mock<IClock> _clock = new();
     private readonly Mock<IRuntimeEnvironment> _environment = new();
+    private readonly Mock<ICorrelationIdAccessor> _correlationIdAccessor = new();
     private readonly FakePaymentProviderAdapterStub _fakeAdapter;
     private readonly IPaymentProviderRouter _router;
 
@@ -33,13 +35,14 @@ public class CreateCheckoutHandlerTests
             .ReturnsAsync(true);
         _apps.Setup(a => a.GetByTenantAndIdAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ApplicationClient(Guid.NewGuid(), Guid.NewGuid(), "Test App"));
-        _accounts.Setup(a => a.GetByCodeAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<ProviderCode>(), It.IsAny<CancellationToken>()))
+        _accounts.Setup(a => a.GetByCodeAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), ProviderCode.Fake, It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid t, Guid a, ProviderCode c, CancellationToken _) =>
                 new ProviderAccount(Guid.NewGuid(), t, a, c, ProviderEnvironment.Sandbox, "Fake", "encrypted"));
         _uow.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
         _clock.Setup(c => c.UtcNow).Returns(new DateTime(2026, 6, 16, 12, 0, 0, DateTimeKind.Utc));
         _hasher.Setup(h => h.Hash(It.IsAny<string>())).Returns("hash");
         _environment.Setup(e => e.IsDevelopment).Returns(true);
+        _correlationIdAccessor.Setup(a => a.CorrelationId).Returns((string?)null);
 
         _fakeAdapter = new FakePaymentProviderAdapterStub();
         _router = new TestProviderRouter(_fakeAdapter);
@@ -79,7 +82,7 @@ public class CreateCheckoutHandlerTests
         _outbox.Verify(o => o.EnqueueAsync(
             It.IsAny<Guid>(),
             tenantId, appId, "payment.checkout.created",
-            It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -214,7 +217,8 @@ public class CreateCheckoutHandlerTests
 
     private CreateCheckoutHandler CreateHandler()
         => new(_tenants.Object, _apps.Object, _accounts.Object, _payments.Object,
-            _idempotency.Object, _hasher.Object, _router, _outbox.Object, _uow.Object, _clock.Object, _environment.Object);
+            _idempotency.Object, _hasher.Object, _router, _outbox.Object, _uow.Object, _clock.Object, _environment.Object,
+            _correlationIdAccessor.Object);
 
     private static CreateCheckoutRequestDto ValidRequest()
         => new(

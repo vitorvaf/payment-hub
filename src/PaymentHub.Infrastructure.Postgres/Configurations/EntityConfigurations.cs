@@ -196,6 +196,12 @@ public class WebhookEventConfiguration : IEntityTypeConfiguration<WebhookEvent>
         builder.Property(w => w.NextRetryAt).HasColumnName("next_retry_at");
         builder.Property(w => w.ReceivedAt).HasColumnName("received_at").IsRequired();
         builder.Property(w => w.UpdatedAt).HasColumnName("updated_at").IsRequired();
+        // Slice 9-O1.2: non-sensitive correlation id resolved by
+        // CorrelationIdMiddleware and propagated through the inbox → outbox
+        // → dispatcher flow. MaxLength mirrors the bounded
+        // CorrelationIdGenerator validation window so the DB never receives
+        // a value the API rejected.
+        builder.Property(w => w.CorrelationId).HasColumnName("correlation_id").HasMaxLength(64);
         builder.HasIndex(w => new { w.ProviderCode, w.ProviderEventId })
             .IsUnique()
             .HasFilter("provider_event_id IS NOT NULL");
@@ -226,6 +232,13 @@ public class OutboxEventConfiguration : IEntityTypeConfiguration<OutboxEvent>
         // every non-`Processing` state (Pending/Sent/Failed) must have it cleared by the
         // entity transition methods. See `OutboxEvent.MarkProcessing`/`MarkSent`/etc.
         builder.Property(o => o.ProcessingStartedAt).HasColumnName("processing_started_at");
+        // Slice 9-O1.2: correlation id propagated from the originating HTTP
+        // request. The dispatcher reads it from this column and echoes it on
+        // the outbound X-Correlation-Id header so consumers can stitch logs
+        // across the two systems. Nullable: legacy rows and background seeds
+        // carry null. MaxLength mirrors the bounded
+        // CorrelationIdGenerator validation window.
+        builder.Property(o => o.CorrelationId).HasColumnName("correlation_id").HasMaxLength(64);
         builder.Property(o => o.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(o => o.UpdatedAt).HasColumnName("updated_at").IsRequired();
         // Claim index covers `ClaimPendingForDispatchAsync`: filters on `status = 'Pending'`

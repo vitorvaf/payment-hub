@@ -18,6 +18,35 @@ public interface IOutboxPublisher
         string eventType,
         TEvent @event,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Slice 9-O1.2: overload that also accepts the correlation id resolved
+    /// by <c>CorrelationIdMiddleware</c>. The id is persisted in the new
+    /// <c>outbox_events.correlation_id</c> column and propagated by the
+    /// dispatcher to the outbound <c>X-Correlation-Id</c> header.
+    /// </summary>
+    Task<Guid> EnqueueAsync<TEvent>(
+        Guid tenantId,
+        Guid applicationId,
+        string eventType,
+        TEvent @event,
+        string? correlationId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Slice 9-O1.2: deterministic id + correlation id overload used by
+    /// callers that already minted the <see cref="OutboxEvent"/> id (e.g.
+    /// the checkout handler, which threads the id through the published
+    /// payload).
+    /// </summary>
+    Task EnqueueAsync<TEvent>(
+        Guid outboxEventId,
+        Guid tenantId,
+        Guid applicationId,
+        string eventType,
+        TEvent @event,
+        string? correlationId,
+        CancellationToken cancellationToken);
 }
 
 public interface IOutboxRepository

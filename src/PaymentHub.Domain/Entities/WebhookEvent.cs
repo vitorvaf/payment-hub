@@ -20,6 +20,16 @@ public class WebhookEvent
     public DateTime ReceivedAt { get; private set; }
     public DateTime UpdatedAt { get; private set; }
 
+    /// <summary>
+    /// Slice 9-O1.2: correlation id resolved at the controller edge by
+    /// <c>CorrelationIdMiddleware</c>. Persists the inbound request id so the
+    /// inbox processor and the resulting <c>OutboxEvent</c> can keep the same
+    /// value end-to-end. Optional because background seeds and legacy rows
+    /// have no inbound request to read from. Stored in <c>correlation_id
+    /// VARCHAR(64) NULL</c>.
+    /// </summary>
+    public string? CorrelationId { get; private set; }
+
     private WebhookEvent() { }
 
     public WebhookEvent(
@@ -30,7 +40,8 @@ public class WebhookEvent
         string? providerEventId,
         string? signature,
         Guid? tenantId = null,
-        Guid? applicationId = null)
+        Guid? applicationId = null,
+        string? correlationId = null)
     {
         if (id == Guid.Empty) throw new ArgumentException("Id is required.", nameof(id));
         if (string.IsNullOrWhiteSpace(eventType))
@@ -46,9 +57,32 @@ public class WebhookEvent
         Signature = signature;
         TenantId = tenantId;
         ApplicationId = applicationId;
+        CorrelationId = NormalizeCorrelationId(correlationId);
         ProcessingStatus = WebhookProcessingStatus.Pending;
         ReceivedAt = DateTime.UtcNow;
         UpdatedAt = ReceivedAt;
+    }
+
+    /// <summary>
+    /// Sets the correlation id after construction. Used when the inbound
+    /// webhook is processed asynchronously and the controller only learns
+    /// the resolved id after the row was already inserted (e.g. background
+    /// retries that need to update the value).
+    /// </summary>
+    public void SetCorrelationId(string? correlationId)
+    {
+        CorrelationId = NormalizeCorrelationId(correlationId);
+    }
+
+    private static string? NormalizeCorrelationId(string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate)) return null;
+        var trimmed = candidate.Trim();
+        // Slice 9-O1.2: bounded to the column width (varchar(64)) declared
+        // in the migration. Keep the cap local to the Domain layer so we
+        // avoid a reverse dependency on Application.
+        const int MaxLength = 64;
+        return trimmed.Length <= MaxLength ? trimmed : trimmed[..MaxLength];
     }
 
     public void MarkProcessing()

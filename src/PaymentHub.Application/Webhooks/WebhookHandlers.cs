@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PaymentHub.Application.Abstractions.Context;
+using PaymentHub.Application.Abstractions.Observability;
 using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Abstractions.Providers;
@@ -19,6 +20,7 @@ public interface IReceiveProviderWebhookHandler
         string rawBody,
         string? providerEventId,
         string? signature,
+        string? correlationId,
         CancellationToken cancellationToken);
 }
 
@@ -49,6 +51,7 @@ public sealed class ReceiveProviderWebhookHandler : IReceiveProviderWebhookHandl
         string rawBody,
         string? providerEventId,
         string? signature,
+        string? correlationId,
         CancellationToken cancellationToken)
     {
         if (!Enum.TryParse<ProviderCode>(providerCode, ignoreCase: true, out var code))
@@ -66,7 +69,8 @@ public sealed class ReceiveProviderWebhookHandler : IReceiveProviderWebhookHandl
             eventType,
             rawBody,
             providerEventId,
-            signature);
+            signature,
+            correlationId: correlationId);
 
         await _webhooks.AddAsync(webhook, cancellationToken);
         await _uow.SaveChangesAsync(cancellationToken);
@@ -253,6 +257,12 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
                         providerPaymentId = payment.ProviderPaymentId,
                         occurredAt = payment.UpdatedAt
                     },
+                    // Slice 9-O1.2: propagate the inbound correlation id so
+                    // the resulting outbox row carries the same value and the
+                    // dispatcher echoes it on the outbound X-Correlation-Id
+                    // header. webhook.CorrelationId is set by
+                    // ReceiveProviderWebhookHandler from the inbound request.
+                    webhook.CorrelationId,
                     cancellationToken);
             }
 

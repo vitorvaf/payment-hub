@@ -1038,3 +1038,97 @@ Validar em integracao (Testcontainers Postgres + WebApplicationFactory + HttpCli
 ## Proxima slice recomendada
 
 - **Slice 9-O2 — Instrumentacao ativa nos handlers/workers**: wire `PaymentHubMetrics` em `CreateCheckoutHandler` / `ProviderWebhooksController` / `ProcessWebhookEventHandler` / `OutboxDispatcherWorker` / `ApiKeyAuthenticationMiddleware`. Ja documentada em `feature_list.md` (PH-OBS-004).
+
+### 2026-07-02 - Slice 9-O2 — Instrumentacao ativa nos handlers/workers
+
+Status: IMPLEMENTING
+
+## Objetivo
+
+Conectar `PaymentHubMetrics` (13 counters + 3 histograms ja existentes do Slice 9-O1), `PaymentHubLogEvents` (31 eventos canonicos) e `SafeLog` aos 8 call sites criticos sem alterar regras de negocio, sem vazar secrets, e respeitando a tag whitelist (7 chaves).
+
+## Discovery
+
+### Estado atual de `PaymentHubMetrics`
+
+Arquivo `src/PaymentHub.Application/Observability/PaymentHubMetrics.cs` (239 linhas, Slice 9-O1). Instrumentos ja disponiveis:
+- **Counters (13)**: `CheckoutsCreatedTotal`, `CheckoutsIdempotentReplayTotal`, `CheckoutsIdempotencyConflictTotal`, `ProviderWebhooksReceivedTotal`, `ProviderWebhooksRejectedTotal`, `WebhookEventsProcessedTotal`, `WebhookEventsFailedTotal`, `WebhookEventsRetriedTotal`, `OutboxEventsSentTotal`, `OutboxEventsRetriedTotal`, `OutboxEventsFailedTotal`, `OutboxOrphansRecoveredTotal`, `AuthorizationDeniedTotal`.
+- **Histograms (3)**: `CheckoutDurationMs`, `ProviderWebhookDurationMs`, `OutboxDispatchDurationMs`.
+- **Tag whitelist (7)**: `provider`, `operation`, `status`, `error_category`, `event_type`, `environment`, `worker`. `Tag(...)` rejeita em runtime chaves fora.
+
+### Gaps a estender
+
+- `CheckoutFailedTotal`: NAO existe; precisa ser adicionado para diferenciar checkout.failed de checkout.idempotency_conflict.
+- `ProviderCallTotal` / `ProviderCallFailedTotal`: NAO existem; seram usados para instrumentar `AbacatePayClient` + `AbacatePayWebhookManagementClient`.
+- `ProviderCallDurationMs`: NAO existe; precisa ser adicionado.
+
+### Estado atual de `PaymentHubLogEvents`
+
+31 constantes canonicas em `src/PaymentHub.Application/Observability/PaymentHubLogEvents.cs`. Eventos ja cobrem todos os fluxos:
+- Checkout: `checkout.accepted`, `checkout.idempotent_replay`, `checkout.idempotency_conflict`, `checkout.failed`, `checkout.provider_error`.
+- Provider webhooks: `provider_webhook.received`, `provider_webhook.rejected`, `provider_webhook.invalid_json`, `provider_webhook.signature_invalid`.
+- Inbox: `webhook_event.processed`, `webhook_event.retried`, `webhook_event.failed`, `webhook_event.payment_not_found`, `webhook_event.orphaned`.
+- Outbox: `outbox_event.sent`, `outbox_event.retried`, `outbox_event.failed`, `outbox.orphan_recovered`, `outbox_event.application_not_found`, `outbox_event.webhook_url_missing`, `outbox_event.unprotect_failure`, `outbox_event.dispatch_timeout`, `outbox_event.dispatch_network_error`, `outbox_event.dispatch_http_failure`.
+- Auth: `auth.accepted`, `auth.denied`, `auth.inactive`.
+- Observability: `observability.correlation_id_generated`, `observability.correlation_id_accepted`.
+
+Todos os eventos ja estao no catalogo. Slice 9-O2 NAO precisa adicionar novos eventos — apenas USAR os existentes.
+
+### Estado atual de `SafeLog`
+
+Helpers em `src/PaymentHub.Application/Observability/SafeLog.cs` (70 linhas):
+- `SafeLog.Id(Guid?)` -> primeiros 8 chars do GUID-N ou "-".
+- `SafeLog.Length(string?)` -> contagem de chars (sem conteudo).
+- `SafeLog.Flag(label, bool?)` -> "label=yes"/"label=no"/"label=-".
+- `SafeLog.Category<TEnum>(TEnum)` -> nome do enum (sem payload).
+
+### Helpers de teste disponiveis
+
+- `tests/PaymentHub.UnitTests/Support/InMemoryLoggerProvider.cs` (testa logs estruturados).
+- `tests/PaymentHub.UnitTests/Support/InMemoryMetricsCollector.cs` (testa metricas via `MeterListener`).
+- `tests/PaymentHub.UnitTests/Support/CorrelationIdTestHelper.cs`.
+
+### Estado atual dos call sites
+
+| Call site | Estado atual | Acoes planejadas |
+|---|---|---|
+| `CreateCheckoutHandler` | Sem instrumentacao | Wire `CheckoutsCreatedTotal`/`CheckoutFailedTotal`/`CheckoutDurationMs` + `PaymentHubLogEvents.Checkout*` + `SafeLog` |
+| `AbacatePayClient` | Loga em 1 path (timeout/network/HTTP failure) sem metricas | Wrap `SendAsync` com `ProviderCallTotal`/`ProviderCallFailedTotal`/`ProviderCallDurationMs` |
+| `AbacatePayWebhookManagementClient` | Loga em todos os paths com `LogWarning` | Wrap com `ProviderCallTotal` + categorias enum (registrado/nao-registrado) |
+| `ProviderWebhooksController` | Loga apenas fail-fast 401 (AbacatePay) | Wire `ProviderWebhooksReceivedTotal`/`ProviderWebhooksRejectedTotal` |
+| `ProcessWebhookEventHandler` | Loga em varios paths | Wire `WebhookEventsProcessedTotal`/`FailedTotal`/`RetriedTotal` + categoria segura |
+| `OutboxDispatcherWorker` | Loga sweep/claim/dispatch com detalhes | Wire `OutboxOrphansRecoveredTotal` + duration |
+| `HttpApplicationWebhookDispatcher` | Loga dispatch succeeded/failed | Wire `OutboxDispatchDurationMs` + categoria enum |
+| `ApiKeyAuthenticationMiddleware` | Loga 401/403 com tenantId/applicationId | Wire `AuthorizationDeniedTotal` + motivo seguro |
+
+### Testes planejados (23 testes)
+
+- 13 testes de metric emission por call site
+- 7 testes de no-leak (um por call site sensitive)
+- 2 testes E2E (opcional, condicionais a estabilidade)
+- 1 teste consolidado de whitelist (ja existe em `PaymentHubMetricsTests.AllowedTagKeys_ShouldNotContainForbiddenKeys`)
+
+### Riscos e gaps
+
+- **Anti-leak gate regex**: ja ativo no `scripts/agent-docs-check.sh`. Re-asserted em todos os novos logs.
+- **Tag whitelist**: ja enforced em runtime pelo `PaymentHubMetrics.Tag(...)`. Re-asserted em todos os novos tag calls.
+- **Nao alterar regras de negocio**: confirmado — slice apenas wrappa metodos existentes com `try { ... } finally { metric }` ou usa chamadas `.Add(1)` em pontos de sucesso/falha.
+- **Nao criar migration nova**: confirmado — slice apenas adiciona metricas em memoria + log lines.
+- **Docker NAO disponivel em algumas sessoes**: testes E2E marcados como opcionais (ja documentado no Slice 9-O1.IT learnings).
+
+## Plano de execucao
+
+1. Estender `PaymentHubMetrics.cs` com 3 novos counters: `CheckoutFailedTotal`, `ProviderCallTotal`, `ProviderCallFailedTotal` + 1 histogram `ProviderCallDurationMs`. Atualizar test `PaymentHubMetricsTests` para cobrir os novos instrumentos.
+2. Adicionar 3 testes novos: `PaymentHubMetricsTests.CheckoutFailedTotal_ShouldBeRegistered`, `PaymentHubMetricsTests.ProviderCallTotal_ShouldBeRegistered`, `PaymentHubMetricsTests.ProviderCallDurationMs_ShouldBeRegistered`.
+3. Wire instrumentacao nos 8 call sites sem alterar comportamento.
+4. Adicionar testes unit para metric emission (cobrir increment em sucesso/falha por call site).
+5. Rodar suite completa (esperado: 547 + ~25 novos = ~572 unit + 37 integration = ~609 testes).
+6. Atualizar docs (validation-matrix, learnings, roadmap, feature_list).
+7. Criar audit report `docs/audits/slice-9-o2-active-instrumentation-report-2026-07-02.md`.
+8. Commit.
+
+## Proxima slice recomendada
+
+- **Slice 9-O3 ou Phase 6-AuditLog** (escolher conforme gaps):
+  - 9-O3: adicionar tags dimensionais (operation, status, error_category) ao Dashboard / Grafana export (OpenTelemetry exporter opcional).
+  - Phase 6-AuditLog: implementar captura automatica de acoes administrativas em `ConfigureProviderAccountWebhookHandler`, `RegisterProviderAccountHandler`, etc. (PH-AUD-001).

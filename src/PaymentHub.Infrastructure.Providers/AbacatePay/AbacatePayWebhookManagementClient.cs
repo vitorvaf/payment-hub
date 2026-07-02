@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -6,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PaymentHub.Application.Abstractions.Providers;
 using PaymentHub.Application.Abstractions.Security;
+using PaymentHub.Application.Observability;
 using PaymentHub.Domain.Enums;
 using PaymentHub.Infrastructure.Providers.AbacatePay.Models;
 
@@ -94,6 +96,16 @@ public sealed class AbacatePayWebhookManagementClient
         // configuration surface narrow until a second provider lands.
         if (providerCode != ProviderCode.AbacatePay)
         {
+            PaymentHubMetrics.ProviderCallTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.Status, "rejected_provider"));
+            PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.ErrorCategory, "UnsupportedProvider"));
             _logger.LogWarning(
                 "AbacatePayWebhookManagementClient called with non-AbacatePay provider {ProviderCode}; refusing.",
                 providerCode);
@@ -106,6 +118,16 @@ public sealed class AbacatePayWebhookManagementClient
         // future caller that skips the handler-level guard.
         if (!_featurePolicy.IsRemoteRegistrationEnabled(providerCode))
         {
+            PaymentHubMetrics.ProviderCallTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.Status, "rejected_disabled"));
+            PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.ErrorCategory, "RegistrationDisabled"));
             _logger.LogWarning(
                 "AbacatePayWebhookManagementClient refused: registration feature flag is off (provider={ProviderCode}).",
                 providerCode);
@@ -121,6 +143,16 @@ public sealed class AbacatePayWebhookManagementClient
             || events is null || events.Count == 0
             || string.IsNullOrWhiteSpace(webhookSecret))
         {
+            PaymentHubMetrics.ProviderCallTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.Status, "rejected_invalid_request"));
+            PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.ErrorCategory, "BadRequest"));
             _logger.LogWarning(
                 "AbacatePayWebhookManagementClient refused: incomplete request (provider={ProviderCode}).",
                 providerCode);
@@ -130,6 +162,16 @@ public sealed class AbacatePayWebhookManagementClient
         var apiKey = _credentialsReader.ReadApiKey(protectedCredentials);
         if (string.IsNullOrWhiteSpace(apiKey))
         {
+            PaymentHubMetrics.ProviderCallTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.Status, "rejected_credentials"));
+            PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.ErrorCategory, "Unauthorized"));
             _logger.LogWarning(
                 "AbacatePayWebhookManagementClient could not extract apiKey from protected credentials.");
             return ProviderWebhookRegistrationOutcome.RegistrationFailed;
@@ -149,6 +191,16 @@ public sealed class AbacatePayWebhookManagementClient
             Secret = webhookSecret,
             Events = events
         };
+
+        // Slice 9-O2: provider call metrics — incremented once before the
+        // HTTP attempt. The call counter only increments on the actual
+        // outbound path; gate rejections above are counted separately with
+        // a `Status` tag.
+        PaymentHubMetrics.ProviderCallTotal.Record(1,
+            PaymentHubMetrics.Tag(
+                PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                PaymentHubMetrics.TagKeys.Operation, "webhook_management_create"));
+        var startedAt = Stopwatch.GetTimestamp();
 
         // ---- 5. Send ----
         try
@@ -171,6 +223,11 @@ public sealed class AbacatePayWebhookManagementClient
                 if (envelope is null || !envelope.Success || envelope.Data is null
                     || string.IsNullOrWhiteSpace(envelope.Data.Id))
                 {
+                    PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                        PaymentHubMetrics.Tag(
+                            PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                            PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                            PaymentHubMetrics.TagKeys.ErrorCategory, "EnvelopeFailure"));
                     _logger.LogWarning(
                         "AbacatePay webhook registration succeeded at HTTP level but envelope returned success=false (provider={ProviderCode}, status={StatusCode}).",
                         providerCode, (int)response.StatusCode);
@@ -186,6 +243,11 @@ public sealed class AbacatePayWebhookManagementClient
             // Categorise HTTP failure with safe message.
             var statusCode = (int)response.StatusCode;
             var category = CategorizeStatus(statusCode);
+            PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.ErrorCategory, SafeLog.Category(category)));
             LogSafeWarning(providerCode, path, statusCode, category);
             DrainBodySafely(response);
             return ProviderWebhookRegistrationOutcome.RegistrationFailed;
@@ -198,6 +260,11 @@ public sealed class AbacatePayWebhookManagementClient
         }
         catch (TaskCanceledException ex)
         {
+            PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.ErrorCategory, "Timeout"));
             _logger.LogWarning(
                 "AbacatePay webhook registration timed out (provider={ProviderCode}).",
                 ProviderCode.AbacatePay);
@@ -210,6 +277,11 @@ public sealed class AbacatePayWebhookManagementClient
         }
         catch (HttpRequestException ex)
         {
+            PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create",
+                    PaymentHubMetrics.TagKeys.ErrorCategory, "Network"));
             _logger.LogWarning(ex,
                 "AbacatePay webhook registration network failure (provider={ProviderCode}).",
                 ProviderCode.AbacatePay);
@@ -219,6 +291,15 @@ public sealed class AbacatePayWebhookManagementClient
                 statusCode: null,
                 isTransient: true,
                 innerException: ex);
+        }
+        finally
+        {
+            // Slice 9-O2: record call duration regardless of outcome.
+            PaymentHubMetrics.ProviderCallDurationMs.Record(
+                Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, "webhook_management_create"));
         }
     }
 

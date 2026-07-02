@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using PaymentHub.Application.Observability;
 using PaymentHub.Infrastructure.Providers.AbacatePay.Models;
 
 namespace PaymentHub.Infrastructure.Providers.AbacatePay;
@@ -113,8 +115,29 @@ public sealed class AbacatePayClient : IAbacatePayClient
         CancellationToken cancellationToken)
         where TResponse : class, new()
     {
+        // Slice 9-O2: provider call duration metric. Recorded via finally
+        // so success AND failure paths are captured. Operation name
+        // derived from path (transparent_pix.create / check / simulate).
+        var startedAt = Stopwatch.GetTimestamp();
+        var operation = MapPathToOperation(path);
+        // Slice 9-O2: increment call counter at the top of every attempt.
+        PaymentHubMetrics.ProviderCallTotal.Record(1,
+            PaymentHubMetrics.Tag(
+                PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                PaymentHubMetrics.TagKeys.Operation, operation));
+
         if (string.IsNullOrWhiteSpace(apiKey))
         {
+            PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, operation,
+                    PaymentHubMetrics.TagKeys.ErrorCategory, "Unauthorized"));
+            PaymentHubMetrics.ProviderCallDurationMs.Record(
+                Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, operation));
             throw new AbacatePayClientException(
                 AbacatePayErrorCategory.Unauthorized,
                 "AbacatePay API key is missing.");
@@ -132,84 +155,140 @@ public sealed class AbacatePayClient : IAbacatePayClient
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-        HttpResponseMessage response;
         try
         {
-            response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        }
-        catch (TaskCanceledException ex) when (cancellationToken.IsCancellationRequested)
-        {
-            // Caller asked for cancellation — not a transient provider timeout.
-            throw new OperationCanceledException(ex.Message, ex, cancellationToken);
-        }
-        catch (TaskCanceledException ex)
-        {
-            // HttpClient timeout — surface as AbacatePayClientException(Timeout).
-            _logger.LogWarning("AbacatePay request timed out for path {Path}.", path);
-            throw new AbacatePayClientException(
-                AbacatePayErrorCategory.Timeout,
-                "AbacatePay request timed out.",
-                statusCode: null,
-                isTransient: true,
-                innerException: ex);
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogWarning(ex, "AbacatePay network failure for path {Path}.", path);
-            throw new AbacatePayClientException(
-                AbacatePayErrorCategory.Network,
-                "AbacatePay network failure.",
-                statusCode: null,
-                isTransient: true,
-                innerException: ex);
-        }
+            HttpResponseMessage response;
+            try
+            {
+                response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (TaskCanceledException ex) when (cancellationToken.IsCancellationRequested)
+            {
+                // Caller asked for cancellation — not a transient provider timeout.
+                throw new OperationCanceledException(ex.Message, ex, cancellationToken);
+            }
+            catch (TaskCanceledException ex)
+            {
+                // HttpClient timeout — surface as AbacatePayClientException(Timeout).
+                _logger.LogWarning("AbacatePay request timed out for path {Path}.", path);
+                PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                        PaymentHubMetrics.TagKeys.Operation, operation,
+                        PaymentHubMetrics.TagKeys.ErrorCategory, "Timeout"));
+                throw new AbacatePayClientException(
+                    AbacatePayErrorCategory.Timeout,
+                    "AbacatePay request timed out.",
+                    statusCode: null,
+                    isTransient: true,
+                    innerException: ex);
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogWarning(ex, "AbacatePay network failure for path {Path}.", path);
+                PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                        PaymentHubMetrics.TagKeys.Operation, operation,
+                        PaymentHubMetrics.TagKeys.ErrorCategory, "Network"));
+                throw new AbacatePayClientException(
+                    AbacatePayErrorCategory.Network,
+                    "AbacatePay network failure.",
+                    statusCode: null,
+                    isTransient: true,
+                    innerException: ex);
+            }
 
-        var statusCode = (int)response.StatusCode;
+            var statusCode = (int)response.StatusCode;
 
-        if (!response.IsSuccessStatusCode)
-        {
-            var category = CategorizeStatus(statusCode);
-            _logger.LogWarning(
-                "AbacatePay returned HTTP {StatusCode} for path {Path} (category {Category}).",
-                statusCode, path, category);
+            if (!response.IsSuccessStatusCode)
+            {
+                var category = CategorizeStatus(statusCode);
+                _logger.LogWarning(
+                    "AbacatePay returned HTTP {StatusCode} for path {Path} (category {Category}).",
+                    statusCode, path, category);
 
-            // Drain body to avoid socket exhaustion but never surface its contents.
-            try { _ = await response.Content.ReadAsStringAsync().ConfigureAwait(false); }
-            catch { /* best-effort drain */ }
+                // Slice 9-O2: record failed-call metric before draining
+                // the body. The category is whitelisted (ErrorCategory tag).
+                PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                        PaymentHubMetrics.TagKeys.Operation, operation,
+                        PaymentHubMetrics.TagKeys.ErrorCategory, SafeLog.Category(category)));
 
-            throw new AbacatePayClientException(
-                category,
-                $"AbacatePay HTTP {statusCode}.",
-                statusCode: statusCode,
-                isTransient: category is AbacatePayErrorCategory.RateLimited or AbacatePayErrorCategory.ServerError);
+                // Drain body to avoid socket exhaustion but never surface its contents.
+                try { _ = await response.Content.ReadAsStringAsync().ConfigureAwait(false); }
+                catch { /* best-effort drain */ }
+
+                throw new AbacatePayClientException(
+                    category,
+                    $"AbacatePay HTTP {statusCode}.",
+                    statusCode: statusCode,
+                    isTransient: category is AbacatePayErrorCategory.RateLimited or AbacatePayErrorCategory.ServerError);
+            }
+
+            AbacatePayEnvelope<TResponse>? envelope;
+            try
+            {
+                envelope = await response.Content
+                    .ReadFromJsonAsync<AbacatePayEnvelope<TResponse>>(JsonOptions, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (JsonException ex)
+            {
+                PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                        PaymentHubMetrics.TagKeys.Operation, operation,
+                        PaymentHubMetrics.TagKeys.ErrorCategory, "EnvelopeFailure"));
+                throw new AbacatePayClientException(
+                    AbacatePayErrorCategory.EnvelopeFailure,
+                    "AbacatePay returned a non-JSON or malformed envelope.",
+                    statusCode: statusCode,
+                    isTransient: false,
+                    innerException: ex);
+            }
+
+            if (envelope is null || !envelope.Success || envelope.Data is null)
+            {
+                PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                        PaymentHubMetrics.TagKeys.Operation, operation,
+                        PaymentHubMetrics.TagKeys.ErrorCategory, "EnvelopeFailure"));
+                throw new AbacatePayClientException(
+                    AbacatePayErrorCategory.EnvelopeFailure,
+                    $"AbacatePay envelope reported failure (HTTP {statusCode}).",
+                    statusCode: statusCode);
+            }
+
+            return envelope.Data;
         }
-
-        AbacatePayEnvelope<TResponse>? envelope;
-        try
+        finally
         {
-            envelope = await response.Content
-                .ReadFromJsonAsync<AbacatePayEnvelope<TResponse>>(JsonOptions, cancellationToken)
-                .ConfigureAwait(false);
+            // Slice 9-O2: record call duration regardless of outcome.
+            // The duration tag is recorded on every call so dashboards can
+            // compute p50/p95/p99 latency without splitting by status.
+            PaymentHubMetrics.ProviderCallDurationMs.Record(
+                Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, "abacatepay",
+                    PaymentHubMetrics.TagKeys.Operation, operation));
         }
-        catch (JsonException ex)
-        {
-            throw new AbacatePayClientException(
-                AbacatePayErrorCategory.EnvelopeFailure,
-                "AbacatePay returned a non-JSON or malformed envelope.",
-                statusCode: statusCode,
-                isTransient: false,
-                innerException: ex);
-        }
+    }
 
-        if (envelope is null || !envelope.Success || envelope.Data is null)
-        {
-            throw new AbacatePayClientException(
-                AbacatePayErrorCategory.EnvelopeFailure,
-                $"AbacatePay envelope reported failure (HTTP {statusCode}).",
-                statusCode: statusCode);
-        }
-
-        return envelope.Data;
+    private static string MapPathToOperation(string path)
+    {
+        // Map known AbacatePay v2 paths to a stable operation name for
+        // metrics. Unknown paths get the raw path so dashboards can still
+        // group by provider + path cardinality.
+        if (path.StartsWith("transparents/create", StringComparison.OrdinalIgnoreCase))
+            return "create_transparent_pix";
+        if (path.StartsWith("transparents/check", StringComparison.OrdinalIgnoreCase))
+            return "check_transparent_pix";
+        if (path.StartsWith("transparents/simulate-payment", StringComparison.OrdinalIgnoreCase))
+            return "simulate_transparent_pix";
+        return path;
     }
 
     private static AbacatePayErrorCategory CategorizeStatus(int statusCode) => statusCode switch

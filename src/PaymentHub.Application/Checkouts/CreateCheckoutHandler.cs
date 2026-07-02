@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using PaymentHub.Application.Abstractions.Context;
 using PaymentHub.Application.Abstractions.Observability;
 using PaymentHub.Application.Abstractions.Outbox;
@@ -7,6 +9,7 @@ using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Abstractions.Providers;
 using PaymentHub.Application.Abstractions.Security;
 using PaymentHub.Application.Checkouts;
+using PaymentHub.Application.Observability;
 using PaymentHub.Domain.Entities;
 using PaymentHub.Domain.Enums;
 using PaymentHub.Domain.ValueObjects;
@@ -38,6 +41,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
     private readonly IClock _clock;
     private readonly IRuntimeEnvironment _environment;
     private readonly ICorrelationIdAccessor _correlationIdAccessor;
+    private readonly ILogger<CreateCheckoutHandler> _logger;
 
     public CreateCheckoutHandler(
         ITenantRepository tenants,
@@ -51,7 +55,8 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         IUnitOfWork uow,
         IClock clock,
         IRuntimeEnvironment environment,
-        ICorrelationIdAccessor correlationIdAccessor)
+        ICorrelationIdAccessor correlationIdAccessor,
+        ILogger<CreateCheckoutHandler> logger)
     {
         _tenants = tenants;
         _apps = apps;
@@ -65,6 +70,7 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         _clock = clock;
         _environment = environment;
         _correlationIdAccessor = correlationIdAccessor;
+        _logger = logger;
     }
 
     public async Task<CreateCheckoutResponse> HandleAsync(
@@ -75,142 +81,222 @@ public sealed class CreateCheckoutHandler : ICreateCheckoutHandler
         string? requestedProviderCode,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(idempotencyKey))
-            throw new InvalidOperationException("Idempotency-Key is required.");
-
-        if (!await _tenants.ExistsAsync(tenantId, cancellationToken))
-            throw new InvalidOperationException("Tenant not found.");
-
-        var application = await _apps.GetByTenantAndIdAsync(tenantId, applicationId, cancellationToken)
-            ?? throw new InvalidOperationException("Application not found for tenant.");
-
-        var requestHash = _requestHasher.Hash(BuildIdempotencyHashInput(request));
-
-        var existing = await _idempotency.FindAsync(tenantId, applicationId, idempotencyKey, cancellationToken);
-        if (existing is not null)
-        {
-            if (!string.Equals(existing.RequestHash, requestHash, StringComparison.Ordinal))
-                throw new IdempotencyConflictException();
-
-            var existingPayment = await _payments.GetByIdAsync(existing.PaymentId, cancellationToken);
-            if (existingPayment is not null)
-            {
-                return new CreateCheckoutResponse(
-                    existingPayment.Id,
-                    existingPayment.Status.ToString(),
-                    existingPayment.SelectedProvider.ToString(),
-                    existingPayment.CheckoutUrl);
-            }
-        }
-
-        var amount = ComputeAmountInCents(request.Items);
-        var money = Money.Of(amount, string.IsNullOrWhiteSpace(request.Currency) ? "BRL" : request.Currency);
-        var metadataJson = request.Metadata is null ? null : JsonSerializer.Serialize(request.Metadata);
-
-        var resolved = await ResolveProviderAsync(
-            tenantId, applicationId, application.DefaultProvider, requestedProviderCode, cancellationToken);
-
-        var adapter = _router.Resolve(resolved.ProviderCode.ToString());
-
-        var payment = new Payment(
-            Guid.NewGuid(),
-            tenantId,
-            applicationId,
-            request.ExternalReference,
-            money,
-            resolved.ProviderCode,
-            request.Customer?.Email,
-            request.Customer?.Name,
-            request.SuccessUrl,
-            request.CancelUrl,
-            metadataJson);
-
-        await _payments.AddAsync(payment, cancellationToken);
-
-        var providerRequest = new CreateCheckoutProviderRequest(
-            tenantId,
-            applicationId,
-            payment.Id,
-            payment.ExternalReference,
-            money.Amount,
-            money.Currency,
-            payment.CustomerEmail,
-            payment.CustomerName,
-            payment.SuccessUrl,
-            payment.CancelUrl,
-            payment.MetadataJson,
-            request.Items.Select(i => new ProviderCheckoutItem(i.Id, i.Name, i.Quantity, i.UnitAmount)).ToList())
-        {
-            ProviderAccountId = resolved.ProviderAccountId,
-            ProviderEnvironment = resolved.Environment.ToString(),
-            ProtectedCredentials = resolved.EncryptedCredentials
-        };
-
-        var providerResult = await adapter.CreateCheckoutAsync(providerRequest, cancellationToken);
-
-        if (!providerResult.Success)
-        {
-            payment.RegisterAttempt(
-                PaymentAttemptStatus.Failed,
-                providerResult.ProviderPaymentId,
-                providerResult.ErrorMessage ?? "Provider error");
-            await _uow.SaveChangesAsync(cancellationToken);
-            throw new InvalidOperationException(providerResult.ErrorMessage ?? "Provider failed to create checkout.");
-        }
-
-        payment.AttachProviderResult(
-            providerResult.ProviderPaymentId,
-            providerResult.CheckoutUrl,
-            PaymentStatus.Pending);
-
-        payment.RegisterAttempt(
-            PaymentAttemptStatus.Succeeded,
-            providerResult.ProviderPaymentId,
-            null);
-
-        var idemKey = new IdempotencyKey(
-            Guid.NewGuid(),
-            tenantId,
-            applicationId,
-            idempotencyKey,
-            requestHash,
-            payment.Id);
-        await _idempotency.AddAsync(idemKey, cancellationToken);
-
-        var outboxEventId = Guid.NewGuid();
-        // Slice 9-O1.2: thread the request-scoped correlation id through to
-        // the outbox row so the dispatcher echoes it on the outbound
-        // X-Correlation-Id header.
+        // Slice 9-O2: end-to-end checkout latency. Recorded via `finally`
+        // so success AND failure paths are captured without scattering the
+        // call. `Stopwatch.GetTimestamp()` (not `Stopwatch.StartNew`) avoids
+        // allocation.
+        var startedAt = Stopwatch.GetTimestamp();
         var correlationId = _correlationIdAccessor.CorrelationId;
-        await _outbox.EnqueueAsync(
-            outboxEventId,
-            tenantId,
-            applicationId,
-            "payment.checkout.created",
-            new
+        try
+        {
+            if (string.IsNullOrWhiteSpace(idempotencyKey))
+                throw new InvalidOperationException("Idempotency-Key is required.");
+
+            if (!await _tenants.ExistsAsync(tenantId, cancellationToken))
+                throw new InvalidOperationException("Tenant not found.");
+
+            var application = await _apps.GetByTenantAndIdAsync(tenantId, applicationId, cancellationToken)
+                ?? throw new InvalidOperationException("Application not found for tenant.");
+
+            var requestHash = _requestHasher.Hash(BuildIdempotencyHashInput(request));
+
+            var existing = await _idempotency.FindAsync(tenantId, applicationId, idempotencyKey, cancellationToken);
+            if (existing is not null)
             {
-                eventId = outboxEventId,
-                eventType = "payment.checkout.created",
-                paymentId = payment.Id,
-                externalReference = payment.ExternalReference,
-                amount = money.Amount,
-                currency = money.Currency,
-                provider = resolved.ProviderCode.ToString(),
-                status = payment.Status.ToString(),
-                checkoutUrl = payment.CheckoutUrl,
-                providerPaymentId = payment.ProviderPaymentId,
-                occurredAt = payment.CreatedAt
-            },
-            correlationId,
-            cancellationToken);
+                if (!string.Equals(existing.RequestHash, requestHash, StringComparison.Ordinal))
+                {
+                    PaymentHubMetrics.CheckoutsIdempotencyConflictTotal.Record(1,
+                        PaymentHubMetrics.Tag(PaymentHubMetrics.TagKeys.Provider, "(idempotency)"));
+                    _logger.LogWarning(
+                        "{Event} paymentId={PaymentId} provider={Provider} status={Status}",
+                        PaymentHubLogEvents.CheckoutIdempotencyConflict,
+                        SafeLog.Id(existing.PaymentId),
+                        "(idempotency)",
+                        "conflict");
+                    throw new IdempotencyConflictException();
+                }
 
-        await _uow.SaveChangesAsync(cancellationToken);
+                var existingPayment = await _payments.GetByIdAsync(existing.PaymentId, cancellationToken);
+                if (existingPayment is not null)
+                {
+                    PaymentHubMetrics.CheckoutsIdempotentReplayTotal.Record(1,
+                        PaymentHubMetrics.Tag(PaymentHubMetrics.TagKeys.Provider, existingPayment.SelectedProvider.ToString()));
+                    _logger.LogInformation(
+                        "{Event} paymentId={PaymentId} provider={Provider} status={Status}",
+                        PaymentHubLogEvents.CheckoutIdempotentReplay,
+                        SafeLog.Id(existingPayment.Id),
+                        existingPayment.SelectedProvider,
+                        existingPayment.Status);
+                    return new CreateCheckoutResponse(
+                        existingPayment.Id,
+                        existingPayment.Status.ToString(),
+                        existingPayment.SelectedProvider.ToString(),
+                        existingPayment.CheckoutUrl);
+                }
+            }
 
-        return new CreateCheckoutResponse(
-            payment.Id,
-            payment.Status.ToString(),
-            payment.SelectedProvider.ToString(),
-            payment.CheckoutUrl);
+            var amount = ComputeAmountInCents(request.Items);
+            var money = Money.Of(amount, string.IsNullOrWhiteSpace(request.Currency) ? "BRL" : request.Currency);
+            var metadataJson = request.Metadata is null ? null : JsonSerializer.Serialize(request.Metadata);
+
+            var resolved = await ResolveProviderAsync(
+                tenantId, applicationId, application.DefaultProvider, requestedProviderCode, cancellationToken);
+
+            _logger.LogInformation(
+                "{Event} provider={Provider} environment={Environment}",
+                "checkout.create.provider_selected",
+                resolved.ProviderCode,
+                resolved.Environment);
+
+            var adapter = _router.Resolve(resolved.ProviderCode.ToString());
+
+            var payment = new Payment(
+                Guid.NewGuid(),
+                tenantId,
+                applicationId,
+                request.ExternalReference,
+                money,
+                resolved.ProviderCode,
+                request.Customer?.Email,
+                request.Customer?.Name,
+                request.SuccessUrl,
+                request.CancelUrl,
+                metadataJson);
+
+            await _payments.AddAsync(payment, cancellationToken);
+
+            var providerRequest = new CreateCheckoutProviderRequest(
+                tenantId,
+                applicationId,
+                payment.Id,
+                payment.ExternalReference,
+                money.Amount,
+                money.Currency,
+                payment.CustomerEmail,
+                payment.CustomerName,
+                payment.SuccessUrl,
+                payment.CancelUrl,
+                payment.MetadataJson,
+                request.Items.Select(i => new ProviderCheckoutItem(i.Id, i.Name, i.Quantity, i.UnitAmount)).ToList())
+            {
+                ProviderAccountId = resolved.ProviderAccountId,
+                ProviderEnvironment = resolved.Environment.ToString(),
+                ProtectedCredentials = resolved.EncryptedCredentials
+            };
+
+            // Slice 9-O2: provider call metrics. The actual provider latency
+            // is captured by the adapter itself (AbacatePayClient emits
+            // paymenthub_provider_call_duration_ms); here we emit the
+            // application-level success/failure counters.
+            PaymentHubMetrics.ProviderCallTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, resolved.ProviderCode.ToString(),
+                    PaymentHubMetrics.TagKeys.Operation, "create_checkout"));
+
+            var providerResult = await adapter.CreateCheckoutAsync(providerRequest, cancellationToken);
+
+            if (!providerResult.Success)
+            {
+                PaymentHubMetrics.ProviderCallFailedTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Provider, resolved.ProviderCode.ToString(),
+                        PaymentHubMetrics.TagKeys.Operation, "create_checkout",
+                        PaymentHubMetrics.TagKeys.ErrorCategory, "ProviderError"));
+
+                payment.RegisterAttempt(
+                    PaymentAttemptStatus.Failed,
+                    providerResult.ProviderPaymentId,
+                    providerResult.ErrorMessage ?? "Provider error");
+                await _uow.SaveChangesAsync(cancellationToken);
+                _logger.LogWarning(
+                    "{Event} paymentId={PaymentId} provider={Provider} errorMessageLength={Length}",
+                    PaymentHubLogEvents.CheckoutProviderError,
+                    SafeLog.Id(payment.Id),
+                    resolved.ProviderCode,
+                    SafeLog.Length(providerResult.ErrorMessage));
+                throw new InvalidOperationException(providerResult.ErrorMessage ?? "Provider failed to create checkout.");
+            }
+
+            payment.AttachProviderResult(
+                providerResult.ProviderPaymentId,
+                providerResult.CheckoutUrl,
+                PaymentStatus.Pending);
+
+            payment.RegisterAttempt(
+                PaymentAttemptStatus.Succeeded,
+                providerResult.ProviderPaymentId,
+                null);
+
+            var idemKey = new IdempotencyKey(
+                Guid.NewGuid(),
+                tenantId,
+                applicationId,
+                idempotencyKey,
+                requestHash,
+                payment.Id);
+            await _idempotency.AddAsync(idemKey, cancellationToken);
+
+            var outboxEventId = Guid.NewGuid();
+            // Slice 9-O1.2: thread the request-scoped correlation id through to
+            // the outbox row so the dispatcher echoes it on the outbound
+            // X-Correlation-Id header.
+            await _outbox.EnqueueAsync(
+                outboxEventId,
+                tenantId,
+                applicationId,
+                "payment.checkout.created",
+                new
+                {
+                    eventId = outboxEventId,
+                    eventType = "payment.checkout.created",
+                    paymentId = payment.Id,
+                    externalReference = payment.ExternalReference,
+                    amount = money.Amount,
+                    currency = money.Currency,
+                    provider = resolved.ProviderCode.ToString(),
+                    status = payment.Status.ToString(),
+                    checkoutUrl = payment.CheckoutUrl,
+                    providerPaymentId = payment.ProviderPaymentId,
+                    occurredAt = payment.CreatedAt
+                },
+                correlationId,
+                cancellationToken);
+
+            await _uow.SaveChangesAsync(cancellationToken);
+
+            // Slice 9-O2: success metrics. Recorded only when the payment
+            // was actually persisted (idempotency replay was handled above
+            // and counted separately).
+            PaymentHubMetrics.CheckoutsCreatedTotal.Record(1,
+                PaymentHubMetrics.Tag(PaymentHubMetrics.TagKeys.Provider, resolved.ProviderCode.ToString()));
+            _logger.LogInformation(
+                "{Event} paymentId={PaymentId} provider={Provider} status={Status}",
+                PaymentHubLogEvents.CheckoutAccepted,
+                SafeLog.Id(payment.Id),
+                resolved.ProviderCode,
+                payment.Status);
+
+            return new CreateCheckoutResponse(
+                payment.Id,
+                payment.Status.ToString(),
+                payment.SelectedProvider.ToString(),
+                payment.CheckoutUrl);
+        }
+        catch
+        {
+            // Slice 9-O2: any failure path that escapes (provider error,
+            // invalid tenant, etc.) increments the failure counter. The
+            // idempotency-conflict case is counted above before this catch
+            // fires so we don't double-count it.
+            PaymentHubMetrics.CheckoutFailedTotal.Record(1,
+                PaymentHubMetrics.Tag(PaymentHubMetrics.TagKeys.Status, "failed"));
+            throw;
+        }
+        finally
+        {
+            var elapsedMs = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
+            PaymentHubMetrics.CheckoutDurationMs.Record(elapsedMs);
+        }
     }
 
     private static long ComputeAmountInCents(IReadOnlyList<CheckoutItemDto> items)

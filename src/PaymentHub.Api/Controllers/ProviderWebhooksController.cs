@@ -38,6 +38,12 @@ public class ProviderWebhooksController : ControllerBase
         [FromHeader(Name = HmacAbacatePayWebhookSignatureVerifier.SignatureHeaderName)] string? abacateSignature,
         CancellationToken cancellationToken)
     {
+        // Slice 9-O2: provider webhooks received counter increments on every
+        // accepted request (the controller edge is the entrypoint for
+        // inbound provider webhooks).
+        PaymentHubMetrics.ProviderWebhooksReceivedTotal.Record(1,
+            PaymentHubMetrics.Tag(PaymentHubMetrics.TagKeys.Provider, providerCode));
+
         var signature = !string.IsNullOrWhiteSpace(abacateSignature)
             ? abacateSignature
             : legacySignature;
@@ -52,9 +58,15 @@ public class ProviderWebhooksController : ControllerBase
         // For other providers we keep the legacy permissive behavior.
         if (IsAbacatePay(providerCode) && string.IsNullOrWhiteSpace(signature))
         {
+            // Slice 9-O2: rejection counter + safe category tag (never the
+            // signature value).
+            PaymentHubMetrics.ProviderWebhooksRejectedTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, providerCode,
+                    PaymentHubMetrics.TagKeys.ErrorCategory, "missing_signature"));
             _logger.LogWarning(
-                "Rejected inbound AbacatePay webhook without signature header on path {Path}.",
-                Request.Path);
+                "{Event} provider={ProviderCode} reason={Reason} path={Path}",
+                PaymentHubLogEvents.ProviderWebhookRejected, providerCode, "missing_signature", Request.Path);
             return Unauthorized(new { error = "missing_signature" });
         }
 
@@ -68,9 +80,16 @@ public class ProviderWebhooksController : ControllerBase
                 else if (doc.RootElement.TryGetProperty("event", out var e) && e.ValueKind == JsonValueKind.String)
                     eventType = e.GetString();
             }
-            catch (JsonException ex)
+            catch (JsonException)
             {
-                _logger.LogWarning(ex, "Invalid JSON payload for provider webhook {ProviderCode}", providerCode);
+                // Slice 9-O2: invalid JSON -> rejection counter.
+                PaymentHubMetrics.ProviderWebhooksRejectedTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Provider, providerCode,
+                        PaymentHubMetrics.TagKeys.ErrorCategory, "invalid_json"));
+                _logger.LogWarning(
+                    "{Event} provider={ProviderCode} reason={Reason}",
+                    PaymentHubLogEvents.ProviderWebhookInvalidJson, providerCode, "invalid_json");
                 return BadRequest(new { error = "invalid_json" });
             }
         }
@@ -88,11 +107,24 @@ public class ProviderWebhooksController : ControllerBase
         {
             var webhookId = await _handler.HandleAsync(
                 providerCode, eventType!, rawBody, providerEventId, signature, correlationId, cancellationToken);
+            // Slice 9-O2: structured log of accepted webhooks. SafeLog.Length
+            // reports the body size without surfacing the payload content.
+            _logger.LogInformation(
+                "{Event} provider={ProviderCode} eventTypeLength={EventTypeLength} webhookId={WebhookId}",
+                PaymentHubLogEvents.ProviderWebhookReceived, providerCode, SafeLog.Length(eventType),
+                SafeLog.Id(webhookId));
             return Accepted(new { webhookId });
         }
         catch (InvalidOperationException ex)
         {
-            _logger.LogWarning(ex, "Failed to persist provider webhook {ProviderCode}", providerCode);
+            // Slice 9-O2: persist failure -> rejection counter.
+            PaymentHubMetrics.ProviderWebhooksRejectedTotal.Record(1,
+                PaymentHubMetrics.Tag(
+                    PaymentHubMetrics.TagKeys.Provider, providerCode,
+                    PaymentHubMetrics.TagKeys.ErrorCategory, "persist_failed"));
+            _logger.LogWarning(
+                "{Event} provider={ProviderCode} reason={Reason} messageLength={MessageLength}",
+                PaymentHubLogEvents.ProviderWebhookRejected, providerCode, "persist_failed", SafeLog.Length(ex.Message));
             return UnprocessableEntity(new { error = "webhook_persist_failed", message = ex.Message });
         }
     }

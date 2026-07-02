@@ -218,7 +218,8 @@ public class CreateCheckoutHandlerTests
     private CreateCheckoutHandler CreateHandler()
         => new(_tenants.Object, _apps.Object, _accounts.Object, _payments.Object,
             _idempotency.Object, _hasher.Object, _router, _outbox.Object, _uow.Object, _clock.Object, _environment.Object,
-            _correlationIdAccessor.Object);
+            _correlationIdAccessor.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PaymentHub.Application.Checkouts.CreateCheckoutHandler>.Instance);
 
     private static CreateCheckoutRequestDto ValidRequest()
         => new(

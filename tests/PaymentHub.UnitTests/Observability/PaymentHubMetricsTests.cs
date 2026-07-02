@@ -50,6 +50,66 @@ public class PaymentHubMetricsTests
         measurements[0].Value.Should().Be(123.5);
     }
 
+    // Slice 9-O2 — coverage for the 4 new instruments added to wire
+    // checkout failure, provider calls and provider-call latency.
+
+    [Fact]
+    public void CheckoutFailedTotal_ShouldBeRegistered()
+    {
+        using var collector = new InMemoryMetricsCollector();
+
+        PaymentHubMetrics.CheckoutFailedTotal.Add(1);
+
+        var measurements = collector.For("paymenthub_checkouts_failed_total");
+        measurements.Should().HaveCount(1);
+        measurements[0].Value.Should().Be(1L);
+    }
+
+    [Fact]
+    public void ProviderCallTotal_ShouldBeRegistered()
+    {
+        using var collector = new InMemoryMetricsCollector();
+
+        PaymentHubMetrics.ProviderCallTotal.Add(2,
+            new KeyValuePair<string, object?>(PaymentHubMetrics.TagKeys.Provider, "abacatepay"),
+            new KeyValuePair<string, object?>(PaymentHubMetrics.TagKeys.Operation, "create_transparent_pix"));
+
+        var measurements = collector.For("paymenthub_provider_call_total");
+        measurements.Should().HaveCount(1);
+        measurements[0].Value.Should().Be(2L);
+        measurements[0].Tags[PaymentHubMetrics.TagKeys.Provider].Should().Be("abacatepay");
+        measurements[0].Tags[PaymentHubMetrics.TagKeys.Operation].Should().Be("create_transparent_pix");
+    }
+
+    [Fact]
+    public void ProviderCallFailedTotal_ShouldRecordFailureCategory()
+    {
+        using var collector = new InMemoryMetricsCollector();
+
+        PaymentHubMetrics.ProviderCallFailedTotal.Add(1,
+            new KeyValuePair<string, object?>(PaymentHubMetrics.TagKeys.Provider, "abacatepay"),
+            new KeyValuePair<string, object?>(PaymentHubMetrics.TagKeys.Operation, "check_transparent_pix"),
+            new KeyValuePair<string, object?>(PaymentHubMetrics.TagKeys.ErrorCategory, "Timeout"));
+
+        var measurements = collector.For("paymenthub_provider_call_failed_total");
+        measurements.Should().HaveCount(1);
+        measurements[0].Value.Should().Be(1L);
+        measurements[0].Tags[PaymentHubMetrics.TagKeys.ErrorCategory].Should().Be("Timeout");
+    }
+
+    [Fact]
+    public void ProviderCallDurationMs_ShouldRecordSamples()
+    {
+        using var collector = new InMemoryMetricsCollector();
+
+        PaymentHubMetrics.ProviderCallDurationMs.Record(456.7,
+            new KeyValuePair<string, object?>(PaymentHubMetrics.TagKeys.Provider, "abacatepay"));
+
+        var measurements = collector.For("paymenthub_provider_call_duration_ms");
+        measurements.Should().HaveCount(1);
+        measurements[0].Value.Should().Be(456.7);
+    }
+
     [Fact]
     public void Tag_ShouldBuildTagList_WithWhitelistedKey()
     {

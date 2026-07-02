@@ -237,6 +237,20 @@ Formato de status: `PASS` | `FAIL` | `SKIPPED` | `PENDING`
 | 9 | 9-O1.IT | Full integration suite | `dotnet test tests/PaymentHub.IntegrationTests/PaymentHub.IntegrationTests.csproj` | 33 baseline (Slice 3-IT + 7-IT + 7-M1 + 1-IT + 2-C + 2-C.1) + 4 novos 9-O1.IT = 37 testes | 37/37 PASS (12.0s) | `PASS` | 2026-07-01 (Slice 9-O1.IT) |
 | 9 | 9-O1.IT | Anti-Leak Migration | Migration `20260701000001_AddObservabilityColumns` agora tem BOTH `.cs` (body) AND `.Designer.cs` (BuildTargetModel snapshot) | Designer.cs criado copiando `20260630184619` template + inserindo 2 property mappings (correlation_id VARCHAR(64) NULL em outbox_events + webhook_events) | `PASS` | 2026-07-01 (Slice 9-O1.IT — bug fix in commit aaa9ea5) |
 | 9 | 9-O1.IT | Docs | `docs/audits/slice-9-o1-it-correlationid-e2e-report-2026-07-01.md` | Relatorio curto: 4 testes, designer.cs gotcha, validacoes 547+37=584 testes, anti-regression preservadas | Criado | `PASS` | 2026-07-01 (Slice 9-O1.IT) |
+| 9 | 9-O2 | Build | `dotnet build PaymentHub.slnx` | 0 erros, 0 warnings em 9 projetos | 0 erros, 0 warnings (7.28s) | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Unit | `dotnet test PaymentHub.slnx` | 547 baseline + 4 metric tests + 6 wiring tests = 557 testes | 557/557 PASS (1.5s) | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Unit filter | `dotnet test --filter "FullyQualifiedName~ActiveInstrumentationTests"` | 6 wiring tests pinning 16 counters + 4 histograms + 7-key whitelist | 6/6 PASS (908ms) | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Integration | `dotnet test tests/PaymentHub.IntegrationTests` | 33 baseline + 4 9-O1.IT = 37 testes (sem mudanca nesta slice) | 37/37 PASS (12.5s) | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Anti-Leak Gate | `scripts/agent-docs-check.sh` regex gate | Novos log calls NAO interpolam sensitive tokens | Gate verde | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Architecture | `scripts/agent-architecture-check.sh` | Domain NAO referencia Application; Worker NAO tem IHttpContextAccessor | Passou | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Anti-Regression | `webhook_events.raw_payload` continua `text` (Slice 3-IT) | Auditado | `text` | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Anti-Regression | `outbox_events.payload` continua `jsonb` (Slice 7-IT) | Auditado | `jsonb` | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Anti-Regression | `provider_accounts.webhook_events` continua `text` (Slice 2-C) | Auditado | `text` | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Anti-Regression | `webhookSecret` continua sem coluna propria (Slice 2-C) | Auditado | Sem coluna | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Anti-Regression | `OutboxEvent.LastError` continua apenas categoria enum (Slice 7-A.7) | Auditado em `OutboxEvent.MarkFailedWithStatus`/`MarkRetryWithStatus` | Apenas enum | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Migration | Sem migration nova nesta slice (apenas adicoes em memoria) | Confirmado via `git diff Migrations/` | Sem migration | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Diff | `git diff --check` | Sem warnings | clean | `PASS` | 2026-07-02 (Slice 9-O2) |
+| 9 | 9-O2 | Docs | `docs/audits/slice-9-o2-active-instrumentation-report-2026-07-02.md` | Relatorio: 8 call sites wired, 4 new metrics, anti-leak, validacoes 557+37=594 | A criar | `PENDING` | 2026-07-02 (Slice 9-O2 — audit report) |
 
 ---
 

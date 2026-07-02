@@ -75,7 +75,7 @@ public static class PaymentHubMetrics
     };
 
     // -----------------------------------------------------------------------
-    //  Counters — 13 instruments tracking discrete events.
+    //  Counters — 16 instruments tracking discrete events.
     //  Convention: "_total" suffix (OpenTelemetry semantic convention).
     // -----------------------------------------------------------------------
 
@@ -170,8 +170,43 @@ public static class PaymentHubMetrics
             unit: "{request}",
             description: "Number of inbound requests rejected with 401/403 by ApiKeyAuthenticationMiddleware.");
 
+    /// <summary>
+    /// Slice 9-O2: checkouts that failed for any non-idempotency reason
+    /// (provider error, missing default provider, etc.). Complements
+    /// <see cref="CheckoutsCreatedTotal"/> + <see cref="CheckoutsIdempotencyConflictTotal"/>
+    /// so dashboards can compute success_rate = created / (created + failed + conflict).
+    /// </summary>
+    public static readonly Counter<long> CheckoutFailedTotal =
+        Meter.CreateCounter<long>(
+            "paymenthub_checkouts_failed_total",
+            unit: "{checkout}",
+            description: "Number of checkout requests that failed for non-idempotency reasons (provider error, validation, etc.).");
+
+    /// <summary>
+    /// Slice 9-O2: outbound provider HTTP calls (AbacatePay create/check/simulate
+    /// + AbacatePay webhook management register/list). Counter increments once
+    /// per attempt regardless of outcome; pair with
+    /// <see cref="ProviderCallFailedTotal"/> for failure counts.
+    /// </summary>
+    public static readonly Counter<long> ProviderCallTotal =
+        Meter.CreateCounter<long>(
+            "paymenthub_provider_call_total",
+            unit: "{call}",
+            description: "Number of outbound provider HTTP calls attempted.");
+
+    /// <summary>
+    /// Slice 9-O2: outbound provider calls that failed with a categorized
+    /// error (timeout / network / http-4xx / http-5xx / envelope-failure).
+    /// Tags carry the safe <see cref="AbacatePayErrorCategory"/> name.
+    /// </summary>
+    public static readonly Counter<long> ProviderCallFailedTotal =
+        Meter.CreateCounter<long>(
+            "paymenthub_provider_call_failed_total",
+            unit: "{call}",
+            description: "Number of outbound provider calls that failed with a categorized error.");
+
     // -----------------------------------------------------------------------
-    //  Histograms — 3 instruments tracking durations.
+    //  Histograms — 4 instruments tracking durations.
     //  Convention: "_duration_ms" suffix (milliseconds, OpenTelemetry convention).
     // -----------------------------------------------------------------------
 
@@ -195,6 +230,19 @@ public static class PaymentHubMetrics
             "paymenthub_outbox_dispatch_duration_ms",
             unit: "ms",
             description: "Outbound HTTP latency of HttpApplicationWebhookDispatcher in milliseconds.");
+
+    /// <summary>
+    /// Slice 9-O2: end-to-end latency of outbound provider HTTP calls (used by
+    /// <see cref="AbacatePayClient"/> and
+    /// <see cref="AbacatePayWebhookManagementClient"/>). Pairs with
+    /// <see cref="ProviderCallTotal"/> + <see cref="ProviderCallFailedTotal"/>
+    /// for success-rate and error-budget dashboards.
+    /// </summary>
+    public static readonly Histogram<double> ProviderCallDurationMs =
+        Meter.CreateHistogram<double>(
+            "paymenthub_provider_call_duration_ms",
+            unit: "ms",
+            description: "End-to-end latency of outbound provider HTTP calls in milliseconds.");
 
     // -----------------------------------------------------------------------
     //  Convenience helpers — safe tag construction + recording.
@@ -235,5 +283,62 @@ public static class PaymentHubMetrics
             { key1, value1 },
             { key2, value2 },
         };
+    }
+
+    /// <summary>
+    /// Tags three dimensions in one go. All keys are validated against the
+    /// whitelist; values are taken verbatim.
+    /// </summary>
+    public static TagList Tag(
+        string key1, object? value1,
+        string key2, object? value2,
+        string key3, object? value3)
+    {
+        if (!AllowedTagKeys.Contains(key1))
+            throw new ArgumentException($"Metric tag '{key1}' is not whitelisted.", nameof(key1));
+        if (!AllowedTagKeys.Contains(key2))
+            throw new ArgumentException($"Metric tag '{key2}' is not whitelisted.", nameof(key2));
+        if (!AllowedTagKeys.Contains(key3))
+            throw new ArgumentException($"Metric tag '{key3}' is not whitelisted.", nameof(key3));
+
+        return new TagList
+        {
+            { key1, value1 },
+            { key2, value2 },
+            { key3, value3 },
+        };
+    }
+
+    /// <summary>
+    /// Records <paramref name="increment"/> on <paramref name="counter"/> with
+    /// the supplied <see cref="TagList"/>. Bridges to the
+    /// <c>Counter&lt;T&gt;.Add(T, params KeyValuePair&lt;string, object?&gt;[])</c>
+    /// overload available in .NET 10 (the in-memory <see cref="TagList"/>
+    /// is materialized into an array because there is no
+    /// <c>Add(T, in TagList)</c> overload on this version of the API).
+    /// </summary>
+    public static void Record(this Counter<long> counter, long increment, TagList tags)
+    {
+        counter.Add(increment, ToPairs(tags));
+    }
+
+    /// <summary>
+    /// Materialises a <see cref="TagList"/> into the array shape that
+    /// <c>Counter&lt;T&gt;.Add</c> expects in .NET 10. Internal helper so
+    /// call sites can keep using <see cref="Tag(string, object?)"/> and
+    /// pass the result through <see cref="Record(Counter{long}, long, TagList)"/>
+    /// without an explicit conversion.
+    /// </summary>
+    private static KeyValuePair<string, object?>[] ToPairs(TagList tags)
+    {
+        // TagList exposes a struct enumerator over KeyValuePair<string, object?>.
+        // ToArray copies the values into a heap array (rare path, OK to allocate).
+        var array = new KeyValuePair<string, object?>[tags.Count];
+        var i = 0;
+        foreach (var pair in tags)
+        {
+            array[i++] = pair;
+        }
+        return array;
     }
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PaymentHub.Application.Abstractions.Context;
@@ -6,6 +7,7 @@ using PaymentHub.Application.Abstractions.Outbox;
 using PaymentHub.Application.Abstractions.Persistence;
 using PaymentHub.Application.Abstractions.Providers;
 using PaymentHub.Application.Abstractions.Security;
+using PaymentHub.Application.Observability;
 using PaymentHub.Domain.Entities;
 using PaymentHub.Domain.Enums;
 using PaymentHub.Domain.Services;
@@ -114,178 +116,243 @@ public sealed class ProcessWebhookEventHandler : IProcessWebhookEventHandler
 
     public async Task ProcessAsync(Guid webhookEventId, CancellationToken cancellationToken)
     {
-        var webhook = await _webhooks.GetByIdAsync(webhookEventId, cancellationToken)
-            ?? throw new InvalidOperationException($"Webhook event {webhookEventId} not found.");
-
-        if (webhook.ProcessingStatus == WebhookProcessingStatus.Processed)
-            return;
-
-        webhook.MarkProcessing();
-        await _uow.SaveChangesAsync(cancellationToken);
-
+        // Slice 9-O2: webhook processing latency. Recorded via finally
+        // so success + failure paths are captured consistently.
+        var startedAt = Stopwatch.GetTimestamp();
         try
         {
-            var adapter = _router.Resolve(webhook.ProviderCode.ToString());
+            var webhook = await _webhooks.GetByIdAsync(webhookEventId, cancellationToken)
+                ?? throw new InvalidOperationException($"Webhook event {webhookEventId} not found.");
 
-            // Slice 2-B: webhookSecret must be resolved BEFORE the adapter
-            // runs HMAC verification. The handler looks up the
-            // ProviderAccount by (tenantId, applicationId, providerCode)
-            // and unprotects the secret inside EncryptedCredentials. The
-            // secret is passed in-memory to the adapter and is NEVER
-            // persisted on the WebhookEvent row, NEVER logged, and NEVER
-            // returned in error messages.
-            //
-            // Outcomes:
-            // - TryResolveWebhookSecretAsync returns a string  → adapter
-            //   receives it via init-only property.
-            // - Returns null AND provider is non-AbacatePay → the
-            //   provider's adapter does not require HMAC, follow legacy
-            //   path with no secret.
-            // - Returns null AND provider is AbacatePay → AbacatePay
-            //   REQUIRES HMAC, so the webhook is permanently failed.
-            string? webhookSecret = null;
-            bool requiresHmac = webhook.ProviderCode == ProviderCode.AbacatePay;
-            if (requiresHmac)
+            if (webhook.ProcessingStatus == WebhookProcessingStatus.Processed)
             {
-                webhookSecret = await ResolveAbacatePayWebhookSecretAsync(webhook, cancellationToken);
-                if (webhookSecret is null)
+                // Slice 9-O2: duplicate detection counter — already-processed
+                // webhooks return early so this metric distinguishes idempotent
+                // replays from fresh processing.
+                PaymentHubMetrics.WebhookEventsRetriedTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Provider, webhook.ProviderCode.ToString(),
+                        PaymentHubMetrics.TagKeys.Status, "duplicate"));
+                return;
+            }
+
+            webhook.MarkProcessing();
+            await _uow.SaveChangesAsync(cancellationToken);
+
+            try
+            {
+                var adapter = _router.Resolve(webhook.ProviderCode.ToString());
+
+                // Slice 2-B: webhookSecret must be resolved BEFORE the adapter
+                // runs HMAC verification. The handler looks up the
+                // ProviderAccount by (tenantId, applicationId, providerCode)
+                // and unprotects the secret inside EncryptedCredentials. The
+                // secret is passed in-memory to the adapter and is NEVER
+                // persisted on the WebhookEvent row, NEVER logged, and NEVER
+                // returned in error messages.
+                //
+                // Outcomes:
+                // - TryResolveWebhookSecretAsync returns a string  → adapter
+                //   receives it via init-only property.
+                // - Returns null AND provider is non-AbacatePay → the
+                //   provider's adapter does not require HMAC, follow legacy
+                //   path with no secret.
+                // - Returns null AND provider is AbacatePay → AbacatePay
+                //   REQUIRES HMAC, so the webhook is permanently failed.
+                string? webhookSecret = null;
+                bool requiresHmac = webhook.ProviderCode == ProviderCode.AbacatePay;
+                if (requiresHmac)
                 {
+                    webhookSecret = await ResolveAbacatePayWebhookSecretAsync(webhook, cancellationToken);
+                    if (webhookSecret is null)
+                    {
+                        PaymentHubMetrics.WebhookEventsFailedTotal.Record(1,
+                            PaymentHubMetrics.Tag(
+                                PaymentHubMetrics.TagKeys.Provider, webhook.ProviderCode.ToString(),
+                                PaymentHubMetrics.TagKeys.ErrorCategory, "SecretUnresolved"));
+                        _logger.LogWarning(
+                            "{Event} provider={ProviderCode} webhookId={WebhookId} reason={Reason}",
+                            PaymentHubLogEvents.WebhookEventFailed, webhook.ProviderCode,
+                            SafeLog.Id(webhook.Id), "secret_unresolved");
+                        webhook.MarkPermanentlyFailed(
+                            $"Webhook secret could not be resolved for provider '{webhook.ProviderCode}'.");
+                        await _uow.SaveChangesAsync(cancellationToken);
+                        return;
+                    }
+                }
+
+                var parsed = await adapter.ParseWebhookAsync(
+                    new ProviderWebhookRequest(
+                        webhook.RawPayloadJson,
+                        webhook.Signature,
+                        new Dictionary<string, string>
+                        {
+                            ["X-Provider-Event-Id"] = webhook.ProviderEventId ?? string.Empty,
+                            ["X-Provider-Event-Type"] = webhook.EventType
+                        })
+                    {
+                        // Adapter receives the secret via init-only property.
+                        // The handler keeps no field-level reference — once
+                        // ParseWebhookAsync returns, the secret reference is
+                        // eligible for GC.
+                        WebhookSecret = webhookSecret
+                    },
+                    cancellationToken);
+
+                if (!parsed.IsValid)
+                {
+                    PaymentHubMetrics.WebhookEventsFailedTotal.Record(1,
+                        PaymentHubMetrics.Tag(
+                            PaymentHubMetrics.TagKeys.Provider, webhook.ProviderCode.ToString(),
+                            PaymentHubMetrics.TagKeys.ErrorCategory, "InvalidPayload"));
                     _logger.LogWarning(
-                        "Webhook {WebhookId} for provider {ProviderCode} could not resolve webhookSecret; marking permanently failed.",
-                        webhook.Id, webhook.ProviderCode);
+                        "{Event} provider={ProviderCode} webhookId={WebhookId} reasonLength={ReasonLength}",
+                        PaymentHubLogEvents.WebhookEventFailed, webhook.ProviderCode,
+                        SafeLog.Id(webhook.Id), SafeLog.Length(parsed.ErrorMessage));
                     webhook.MarkPermanentlyFailed(
-                        $"Webhook secret could not be resolved for provider '{webhook.ProviderCode}'.");
+                        Sanitize(parsed.ErrorMessage) ?? "Invalid provider webhook payload.");
                     await _uow.SaveChangesAsync(cancellationToken);
                     return;
                 }
-            }
 
-            var parsed = await adapter.ParseWebhookAsync(
-                new ProviderWebhookRequest(
-                    webhook.RawPayloadJson,
-                    webhook.Signature,
-                    new Dictionary<string, string>
-                    {
-                        ["X-Provider-Event-Id"] = webhook.ProviderEventId ?? string.Empty,
-                        ["X-Provider-Event-Type"] = webhook.EventType
-                    })
+                var providerPaymentId = parsed.ProviderPaymentId;
+                if (string.IsNullOrWhiteSpace(providerPaymentId))
+                    throw new InvalidOperationException("Webhook payload missing provider payment id.");
+
+                var payment = await FindPaymentAsync(webhook, providerPaymentId, cancellationToken);
+                if (payment is null)
                 {
-                    // Adapter receives the secret via init-only property.
-                    // The handler keeps no field-level reference — once
-                    // ParseWebhookAsync returns, the secret reference is
-                    // eligible for GC.
-                    WebhookSecret = webhookSecret
-                },
-                cancellationToken);
+                    PaymentHubMetrics.WebhookEventsFailedTotal.Record(1,
+                        PaymentHubMetrics.Tag(
+                            PaymentHubMetrics.TagKeys.Provider, webhook.ProviderCode.ToString(),
+                            PaymentHubMetrics.TagKeys.ErrorCategory, "PaymentNotFound"));
+                    _logger.LogWarning(
+                        "{Event} provider={ProviderCode} webhookId={WebhookId} reason={Reason}",
+                        PaymentHubLogEvents.WebhookEventPaymentNotFound, webhook.ProviderCode,
+                        SafeLog.Id(webhook.Id), "payment_not_found");
+                    webhook.MarkPermanentlyFailed(
+                        $"Payment not found for provider '{webhook.ProviderCode}' and providerPaymentId '{providerPaymentId}'.");
+                    await _uow.SaveChangesAsync(cancellationToken);
+                    return;
+                }
 
-            if (!parsed.IsValid)
-            {
-                _logger.LogWarning(
-                    "Webhook {WebhookId} for provider {ProviderCode} failed to parse: reason={Reason}.",
-                    webhook.Id, webhook.ProviderCode, parsed.ErrorMessage);
-                webhook.MarkPermanentlyFailed(
-                    Sanitize(parsed.ErrorMessage) ?? "Invalid provider webhook payload.");
-                await _uow.SaveChangesAsync(cancellationToken);
-                return;
-            }
+                var newStatus = PaymentStatusMapper.FromProviderStatus(webhook.ProviderCode.ToString(), parsed.ProviderStatus ?? parsed.EventType);
+                var previousStatus = payment.Status;
+                var statusChanged = payment.ApplyProviderStatus(newStatus, providerPaymentId);
+                // ⚠️ ANTI-REGRESSION (Slice 3-IT Rule 2, BLOCKER for Phase 7-IT).
+                // `payment.RegisterAttempt(...)` adds the new attempt to the
+                // private `_attempts` list (collection navigation). EF Core 10
+                // does NOT reliably detect that addition as `Added` via the
+                // collection navigation change detector — the new entity ends
+                // up tracked as `Modified`, the subsequent SaveChangesAsync
+                // issues an UPDATE with the new Guid in the WHERE clause, the
+                // UPDATE matches 0 rows, and EF throws `DbUpdateConcurrencyException`.
+                // We must call `_payments.AddAttemptAsync(attempt, ct)` so the
+                // repository explicitly calls `_db.PaymentAttempts.AddAsync(...)`,
+                // which marks the entity as `Added` and produces the correct
+                // INSERT.
+                //
+                // **DO NOT** remove the `await _payments.AddAttemptAsync(...)`
+                // line. The E2E test
+                // `ProviderWebhook_ValidSignature_UpdatesPaymentAndEnqueuesOutbox`
+                // will fail at WebhookHandlers.cs line ~248 (the next
+                // SaveChangesAsync after MarkProcessed). Apply the same pattern
+                // to any future handler that adds to a private collection
+                // navigation (refunds, chargebacks, expirations, etc.).
+                //
+                // See `docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md`
+                // (Anti-Regression Notes, Rule 2) and `feature_list.md` entry
+                // `PH-PROVIDER-WEBHOOK-ATTEMPT-TRACKING`.
+                var attempt = payment.RegisterAttempt(
+                    ToAttemptStatus(newStatus),
+                    providerPaymentId,
+                    null);
+                await _payments.AddAttemptAsync(attempt, cancellationToken);
 
-            var providerPaymentId = parsed.ProviderPaymentId;
-            if (string.IsNullOrWhiteSpace(providerPaymentId))
-                throw new InvalidOperationException("Webhook payload missing provider payment id.");
-
-            var payment = await FindPaymentAsync(webhook, providerPaymentId, cancellationToken);
-            if (payment is null)
-            {
-                webhook.MarkPermanentlyFailed(
-                    $"Payment not found for provider '{webhook.ProviderCode}' and providerPaymentId '{providerPaymentId}'.");
-                await _uow.SaveChangesAsync(cancellationToken);
-                return;
-            }
-
-            var newStatus = PaymentStatusMapper.FromProviderStatus(webhook.ProviderCode.ToString(), parsed.ProviderStatus ?? parsed.EventType);
-            var previousStatus = payment.Status;
-            var statusChanged = payment.ApplyProviderStatus(newStatus, providerPaymentId);
-            // ⚠️ ANTI-REGRESSION (Slice 3-IT Rule 2, BLOCKER for Phase 7-IT).
-            // `payment.RegisterAttempt(...)` adds the new attempt to the
-            // private `_attempts` list (collection navigation). EF Core 10
-            // does NOT reliably detect that addition as `Added` via the
-            // collection navigation change detector — the new entity ends
-            // up tracked as `Modified`, the subsequent SaveChangesAsync
-            // issues an UPDATE with the new Guid in the WHERE clause, the
-            // UPDATE matches 0 rows, and EF throws `DbUpdateConcurrencyException`.
-            // We must call `_payments.AddAttemptAsync(attempt, ct)` so the
-            // repository explicitly calls `_db.PaymentAttempts.AddAsync(...)`,
-            // which marks the entity as `Added` and produces the correct
-            // INSERT.
-            //
-            // **DO NOT** remove the `await _payments.AddAttemptAsync(...)`
-            // line. The E2E test
-            // `ProviderWebhook_ValidSignature_UpdatesPaymentAndEnqueuesOutbox`
-            // will fail at WebhookHandlers.cs line ~248 (the next
-            // SaveChangesAsync after MarkProcessed). Apply the same pattern
-            // to any future handler that adds to a private collection
-            // navigation (refunds, chargebacks, expirations, etc.).
-            //
-            // See `docs/audits/slice-3-it-e2e-api-postgres-outbox-provider-report-2026-06-29.md`
-            // (Anti-Regression Notes, Rule 2) and `feature_list.md` entry
-            // `PH-PROVIDER-WEBHOOK-ATTEMPT-TRACKING`.
-            var attempt = payment.RegisterAttempt(
-                ToAttemptStatus(newStatus),
-                providerPaymentId,
-                null);
-            await _payments.AddAttemptAsync(attempt, cancellationToken);
-
-            if (statusChanged && previousStatus != newStatus)
-            {
-                var eventType = $"payment.{newStatus.ToString().ToLowerInvariant()}";
-                var outboxEventId = Guid.NewGuid();
-                await _outbox.EnqueueAsync(
-                    outboxEventId,
-                    payment.TenantId,
-                    payment.ApplicationId,
-                    eventType,
-                    new
-                    {
-                        eventId = outboxEventId,
+                if (statusChanged && previousStatus != newStatus)
+                {
+                    var eventType = $"payment.{newStatus.ToString().ToLowerInvariant()}";
+                    var outboxEventId = Guid.NewGuid();
+                    await _outbox.EnqueueAsync(
+                        outboxEventId,
+                        payment.TenantId,
+                        payment.ApplicationId,
                         eventType,
-                        paymentId = payment.Id,
-                        externalReference = payment.ExternalReference,
-                        amount = payment.Amount.Amount,
-                        currency = payment.Currency,
-                        provider = payment.SelectedProvider.ToString(),
-                        status = payment.Status.ToString(),
-                        providerPaymentId = payment.ProviderPaymentId,
-                        occurredAt = payment.UpdatedAt
-                    },
-                    // Slice 9-O1.2: propagate the inbound correlation id so
-                    // the resulting outbox row carries the same value and the
-                    // dispatcher echoes it on the outbound X-Correlation-Id
-                    // header. webhook.CorrelationId is set by
-                    // ReceiveProviderWebhookHandler from the inbound request.
-                    webhook.CorrelationId,
-                    cancellationToken);
-            }
+                        new
+                        {
+                            eventId = outboxEventId,
+                            eventType,
+                            paymentId = payment.Id,
+                            externalReference = payment.ExternalReference,
+                            amount = payment.Amount.Amount,
+                            currency = payment.Currency,
+                            provider = payment.SelectedProvider.ToString(),
+                            status = payment.Status.ToString(),
+                            providerPaymentId = payment.ProviderPaymentId,
+                            occurredAt = payment.UpdatedAt
+                        },
+                        // Slice 9-O1.2: propagate the inbound correlation id so
+                        // the resulting outbox row carries the same value and the
+                        // dispatcher echoes it on the outbound X-Correlation-Id
+                        // header. webhook.CorrelationId is set by
+                        // ReceiveProviderWebhookHandler from the inbound request.
+                        webhook.CorrelationId,
+                        cancellationToken);
+                }
 
-            webhook.AssociateTenant(payment.TenantId, payment.ApplicationId);
-            webhook.MarkProcessed();
-            await _uow.SaveChangesAsync(cancellationToken);
+                webhook.AssociateTenant(payment.TenantId, payment.ApplicationId);
+                webhook.MarkProcessed();
+                await _uow.SaveChangesAsync(cancellationToken);
+
+                // Slice 9-O2: success metric for inbox processing.
+                PaymentHubMetrics.WebhookEventsProcessedTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Provider, webhook.ProviderCode.ToString(),
+                        PaymentHubMetrics.TagKeys.Status, "processed"));
+                _logger.LogInformation(
+                    "{Event} provider={ProviderCode} webhookId={WebhookId}",
+                    PaymentHubLogEvents.WebhookEventProcessed, webhook.ProviderCode,
+                    SafeLog.Id(webhook.Id));
+            }
+            catch (Exception ex)
+            {
+                // Slice 2-B: defensively sanitize — make sure we never persist
+                // a secret/credential/raw body in LastError, even if the
+                // underlying exception somehow bubbles up with one. The
+                // underlying message is still logged for triage.
+                var sanitized = Sanitize(ex.Message) ?? "Unexpected webhook processing error.";
+                var nextRetry = RetryPolicy.NextRetryAt(webhook.RetryCount + 1, _clock.UtcNow);
+                if (nextRetry is null)
+                {
+                    PaymentHubMetrics.WebhookEventsFailedTotal.Record(1,
+                        PaymentHubMetrics.Tag(
+                            PaymentHubMetrics.TagKeys.Provider, webhook.ProviderCode.ToString(),
+                            PaymentHubMetrics.TagKeys.ErrorCategory, "Unexpected"));
+                    webhook.MarkPermanentlyFailed(sanitized);
+                }
+                else
+                {
+                    PaymentHubMetrics.WebhookEventsRetriedTotal.Record(1,
+                        PaymentHubMetrics.Tag(
+                            PaymentHubMetrics.TagKeys.Provider, webhook.ProviderCode.ToString(),
+                            PaymentHubMetrics.TagKeys.Status, "retrying"));
+                    webhook.MarkFailed(sanitized, nextRetry.Value);
+                }
+                _logger.LogError(ex,
+                    "{Event} provider={ProviderCode} webhookId={WebhookId}",
+                    PaymentHubLogEvents.WebhookEventFailed, webhook.ProviderCode, SafeLog.Id(webhook.Id));
+                await _uow.SaveChangesAsync(cancellationToken);
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            // Slice 2-B: defensively sanitize — make sure we never persist
-            // a secret/credential/raw body in LastError, even if the
-            // underlying exception somehow bubbles up with one. The
-            // underlying message is still logged for triage.
-            _logger.LogError(ex,
-                "Unexpected error while processing webhook {WebhookId} for provider {ProviderCode}.",
-                webhook.Id, webhook.ProviderCode);
-            var sanitized = Sanitize(ex.Message) ?? "Unexpected webhook processing error.";
-            var nextRetry = RetryPolicy.NextRetryAt(webhook.RetryCount + 1, _clock.UtcNow);
-            if (nextRetry is null)
-                webhook.MarkPermanentlyFailed(sanitized);
-            else
-                webhook.MarkFailed(sanitized, nextRetry.Value);
-            await _uow.SaveChangesAsync(cancellationToken);
+            // Slice 9-O2: record processing duration regardless of outcome.
+            var elapsedMs = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
+            // Use ProviderWebhookDurationMs (existing histogram) since the
+            // webhook handler IS the inbound provider webhook flow endpoint
+            // for the inbox. Cross-cutting metric stays within the original
+            // 4-histogram surface (no new histogram added).
+            PaymentHubMetrics.ProviderWebhookDurationMs.Record(elapsedMs);
         }
     }
 

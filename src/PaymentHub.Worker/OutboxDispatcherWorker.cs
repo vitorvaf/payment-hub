@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PaymentHub.Application.Abstractions.Context;
 using PaymentHub.Application.Abstractions.Outbox;
+using PaymentHub.Application.Observability;
 using PaymentHub.Domain.Entities;
 using PaymentHub.Domain.Enums;
 using PaymentHub.Domain.Services;
@@ -88,6 +90,10 @@ public sealed class OutboxDispatcherWorker : BackgroundService
     /// </remarks>
     internal async Task DispatchOnceAsync(CancellationToken cancellationToken)
     {
+        // Slice 9-O2: capture iteration timing for the OutboxDispatchDurationMs
+        // histogram so dashboards can show p50/p95 dispatcher iteration latency.
+        var iterationStartedAt = Stopwatch.GetTimestamp();
+
         // Snapshot the clock once per iteration so every retry schedule in this batch is
         // computed against the same "now". Avoids sub-millisecond jitter between events
         // and keeps the retry policy deterministic in tests. Also used as the
@@ -106,16 +112,33 @@ public sealed class OutboxDispatcherWorker : BackgroundService
         var sweepRecovered = await repository.SweepOrphanedProcessingAsync(cutoff, cancellationToken);
         if (sweepRecovered > 0)
         {
+            // Slice 9-O2: orphan recovery counter — increments by the number
+            // of rows the sweep recovered. Useful for alerting on worker
+            // crashes/restarts.
+            PaymentHubMetrics.OutboxOrphansRecoveredTotal.Record(sweepRecovered,
+                PaymentHubMetrics.Tag(PaymentHubMetrics.TagKeys.Worker, "outbox-dispatcher"));
             _logger.LogInformation(
-                "OutboxDispatcherWorker orphan sweep recovered {Recovered} Processing rows past the {Timeout}s TTL",
-                sweepRecovered, _options.OutboxProcessingTimeoutSeconds);
+                "{Event} recovered={Recovered} timeout={Timeout}",
+                PaymentHubLogEvents.OutboxOrphanRecovered, sweepRecovered, _options.OutboxProcessingTimeoutSeconds);
         }
 
         var claimed = await repository.ClaimPendingForDispatchAsync(
             _options.OutboxWorkerBatchSize, now, cancellationToken);
-        if (claimed.Count == 0) return;
+        if (claimed.Count == 0)
+        {
+            PaymentHubMetrics.OutboxDispatchDurationMs.Record(
+                Stopwatch.GetElapsedTime(iterationStartedAt).TotalMilliseconds);
+            return;
+        }
 
-        _logger.LogInformation("Dispatching {Count} outbox events", claimed.Count);
+        // Slice 9-O2: claim counter — number of rows transitioned from Pending
+        // to Processing by this iteration.
+        PaymentHubMetrics.OutboxEventsSentTotal.Record(claimed.Count,
+            PaymentHubMetrics.Tag(
+                PaymentHubMetrics.TagKeys.Worker, "outbox-dispatcher",
+                PaymentHubMetrics.TagKeys.Status, "claimed"));
+        _logger.LogInformation(
+            "{Event} claimed={Claimed}", "outbox.claim.completed", claimed.Count);
 
         foreach (var outbox in claimed)
         {
@@ -125,6 +148,10 @@ public sealed class OutboxDispatcherWorker : BackgroundService
             // re-introduce the double-dispatch race the slice closes.
             if (outbox.Status != OutboxEventStatus.Processing || outbox.ProcessingStartedAt is null)
             {
+                PaymentHubMetrics.OutboxEventsFailedTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Worker, "outbox-dispatcher",
+                        PaymentHubMetrics.TagKeys.ErrorCategory, "InvalidClaimState"));
                 _logger.LogError(
                     "Outbox event {OutboxId} was returned by ClaimPendingForDispatchAsync in an invalid state (status={Status}, processingStartedAt={ProcessingStartedAt}). Skipping dispatch to avoid a regression of the multi-instance race.",
                     outbox.Id, outbox.Status, outbox.ProcessingStartedAt);
@@ -136,6 +163,10 @@ public sealed class OutboxDispatcherWorker : BackgroundService
                 await dispatcher.DispatchAsync(outbox, cancellationToken);
                 outbox.MarkSent();
                 await eventStore.SaveAsync(outbox, cancellationToken);
+                PaymentHubMetrics.OutboxEventsSentTotal.Record(1,
+                    PaymentHubMetrics.Tag(
+                        PaymentHubMetrics.TagKeys.Worker, "outbox-dispatcher",
+                        PaymentHubMetrics.TagKeys.Status, "sent"));
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -152,16 +183,28 @@ public sealed class OutboxDispatcherWorker : BackgroundService
                 var nextRetry = RetryPolicy.NextRetryAt(outbox.RetryCount + 1, now);
                 if (nextRetry is null)
                 {
+                    PaymentHubMetrics.OutboxEventsFailedTotal.Record(1,
+                        PaymentHubMetrics.Tag(
+                            PaymentHubMetrics.TagKeys.Worker, "outbox-dispatcher",
+                            PaymentHubMetrics.TagKeys.ErrorCategory, SafeLog.Category(wex.Category),
+                            PaymentHubMetrics.TagKeys.Status, "permanently_failed"));
                     _logger.LogError(wex,
-                        "Outbox event {OutboxId} permanently failed after {Retries} retries (category={Category}, status={StatusCode})",
-                        outbox.Id, outbox.RetryCount + 1, wex.Category, wex.StatusCode);
+                        "{Event} outboxId={OutboxId} retries={Retries} category={Category} status={StatusCode}",
+                        PaymentHubLogEvents.OutboxEventFailed, SafeLog.Id(outbox.Id),
+                        outbox.RetryCount + 1, SafeLog.Category(wex.Category), wex.StatusCode);
                     ApplyFailure(outbox, wex, nextAttemptAt: null);
                 }
                 else
                 {
+                    PaymentHubMetrics.OutboxEventsRetriedTotal.Record(1,
+                        PaymentHubMetrics.Tag(
+                            PaymentHubMetrics.TagKeys.Worker, "outbox-dispatcher",
+                            PaymentHubMetrics.TagKeys.ErrorCategory, SafeLog.Category(wex.Category),
+                            PaymentHubMetrics.TagKeys.Status, "retrying"));
                     _logger.LogWarning(wex,
-                        "Outbox event {OutboxId} dispatch failed (category={Category}, status={StatusCode}), retry scheduled at {NextRetry}",
-                        outbox.Id, wex.Category, wex.StatusCode, nextRetry);
+                        "{Event} outboxId={OutboxId} category={Category} status={StatusCode} nextRetry={NextRetry}",
+                        PaymentHubLogEvents.OutboxEventRetried, SafeLog.Id(outbox.Id),
+                        SafeLog.Category(wex.Category), wex.StatusCode, nextRetry);
                     ApplyFailure(outbox, wex, nextAttemptAt: nextRetry.Value);
                 }
                 await eventStore.SaveAsync(outbox, cancellationToken);
@@ -173,21 +216,37 @@ public sealed class OutboxDispatcherWorker : BackgroundService
                 var nextRetry = RetryPolicy.NextRetryAt(outbox.RetryCount + 1, now);
                 if (nextRetry is null)
                 {
+                    PaymentHubMetrics.OutboxEventsFailedTotal.Record(1,
+                        PaymentHubMetrics.Tag(
+                            PaymentHubMetrics.TagKeys.Worker, "outbox-dispatcher",
+                            PaymentHubMetrics.TagKeys.ErrorCategory, "UnexpectedDispatcherError",
+                            PaymentHubMetrics.TagKeys.Status, "permanently_failed"));
                     _logger.LogError(ex,
-                        "Outbox event {OutboxId} permanently failed after {Retries} retries with unexpected error",
-                        outbox.Id, outbox.RetryCount + 1);
+                        "{Event} outboxId={OutboxId} retries={Retries}",
+                        PaymentHubLogEvents.OutboxEventFailed, SafeLog.Id(outbox.Id),
+                        outbox.RetryCount + 1);
                     outbox.MarkFailedWithCategory(WebhookDispatcherCategory.UnexpectedDispatcherError);
                 }
                 else
                 {
+                    PaymentHubMetrics.OutboxEventsRetriedTotal.Record(1,
+                        PaymentHubMetrics.Tag(
+                            PaymentHubMetrics.TagKeys.Worker, "outbox-dispatcher",
+                            PaymentHubMetrics.TagKeys.ErrorCategory, "UnexpectedDispatcherError",
+                            PaymentHubMetrics.TagKeys.Status, "retrying"));
                     _logger.LogWarning(ex,
-                        "Outbox event {OutboxId} dispatch failed with unexpected error, retry scheduled at {NextRetry}",
-                        outbox.Id, nextRetry);
+                        "{Event} outboxId={OutboxId} nextRetry={NextRetry}",
+                        PaymentHubLogEvents.OutboxEventRetried, SafeLog.Id(outbox.Id), nextRetry);
                     outbox.MarkRetryWithCategory(WebhookDispatcherCategory.UnexpectedDispatcherError, nextRetry.Value);
                 }
                 await eventStore.SaveAsync(outbox, cancellationToken);
             }
         }
+
+        // Slice 9-O2: record iteration duration once at the end so dashboards
+        // see total dispatcher iteration latency, not per-event latency.
+        PaymentHubMetrics.OutboxDispatchDurationMs.Record(
+            Stopwatch.GetElapsedTime(iterationStartedAt).TotalMilliseconds);
     }
 
     /// <summary>
